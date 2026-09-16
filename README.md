@@ -5,19 +5,23 @@
 [![Download](https://img.shields.io/github/v/release/Fevzierenn/WinMonitor?label=download&color=2f81f7)](https://github.com/Fevzierenn/WinMonitor/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078d4)](https://github.com/Fevzierenn/WinMonitor/releases/latest)
 [![Python](https://img.shields.io/badge/python-3.12%2B%20(optional)-3776ab)](#option-b--install-with-python-for-developers-and-faster-startup)
-[![Tests](https://img.shields.io/badge/tests-358%20passing-3fb950)](docs/ARCHITECTURE.md#testing)
+[![Tests](https://img.shields.io/badge/tests-358%20passing-3fb950)](#for-developers)
 [![Licence](https://img.shields.io/badge/licence-MIT-lightgrey)](#licence)
 
-WinMonitor is a system monitor for Windows 11 that answers the question
-developers actually ask twenty times a day:
+WinMonitor is a Windows system monitor built for developers who need to quickly
+understand processes, ports, connections, and system resources from the terminal.
 
-> *"Port 8080 is already in use. By what?"*
+A common problem:
+
+> **"Port 8080 is already in use. By what?"**
 
 ```bash
 winmonitor port 8080
 ```
 
-```
+Example output:
+
+```text
 PORT 8080
 
 Commonly:     HTTP alt / Tomcat
@@ -42,36 +46,36 @@ Command:
 java -jar parking-lot.jar
 ```
 
-Then free it:
+Then free the port:
 
 ```bash
 winmonitor kill-port 8080
 ```
 
-It shows you the process, asks once, stops it, and re-checks that Windows has
-actually released the port.
+WinMonitor shows you the process, asks for confirmation, stops it, and checks
+that Windows has actually released the port.
 
 ---
 
 ## What it is for
 
 Task Manager tells you about processes. Resource Monitor tells you about ports.
-Neither connects the two quickly, and neither runs in the terminal you are
-already typing in. WinMonitor does three things well:
+WinMonitor connects the two quickly from the terminal.
 
-| What | How it helps |
+| Feature | What it does |
 |---|---|
-| **Port → process** | "Who has 8080?" — with the command line, so you know *which* of your six `java.exe` processes it is |
-| **Process → port** | "What is this thing listening on?" |
-| **Stop it safely** | Shows what it is about to stop, asks first, then confirms the port is free |
+| **Port → process** | Find which process owns a port, including its command line |
+| **Process → port** | See what ports a process is listening on |
+| **Safe stop** | Shows the target, asks for confirmation, then verifies the result |
+| **Live dashboard** | CPU, memory, disk, network, processes, ports, and connections |
+| **Search** | Quickly search processes and ports |
+| **Export** | Save the current view as JSON or CSV |
 
-Plus a live dashboard, process list, port list and connection list that refresh
-about once a second, all driven by arrow keys.
+All numbers come from the live system. There is no sample or placeholder data.
 
-Every number comes from the live system. There is no sample or placeholder data
-anywhere in it.
+## Live dashboard
 
-```
+```text
 CPU             ███░░░░░░░░░░░░░░░░░  13.1%
 MEMORY          ██████████████████░░  14.1 GB / 16.0 GB
 DISK            ███████████████████░  C:\ 218.0 GB / 224.6 GB
@@ -86,209 +90,227 @@ CPU CORES       8 physical / 16 logical
 ADMINISTRATOR   NO
 ```
 
-It also recognises the ports you care about and names what is on them:
+## Development ports
 
-```
-                           Development ports
-┌──────┬─────────────────┬────────────┬──────┬───────────┬─────────────┐
-│ PORT │ SERVICE         │ PROCESS    │  PID │ STATUS    │ UPTIME      │
-├──────┼─────────────────┼────────────┼──────┼───────────┼─────────────┤
-│ 3306 │ MySQL / MariaDB │ mysqld.exe │ 7144 │ LISTENING │ 1d 06:16:01 │
-└──────┴─────────────────┴────────────┴──────┴───────────┴─────────────┘
-```
+WinMonitor recognises common development ports, including:
 
-31 development ports are recognised, including 3000, 4200, 5173, 5432, 5672,
-6379, 8000, 8080, 9092, 9200 and 27017.
+`3000` · `4200` · `5173` · `5432` · `5672` · `6379` · `8000` · `8080` · `9092` · `9200` · `27017`
+
+Example:
+
+```text
+Development ports
+
+PORT   SERVICE           PROCESS       PID    STATUS       UPTIME
+3306   MySQL / MariaDB   mysqld.exe    7144   LISTENING    1d 06:16:01
+```
 
 ---
 
 ## Requirements
 
-- **Windows 11** (or Windows 10), 64-bit
+- Windows 10 or Windows 11
+- 64-bit
 
-That is all, if you use the standalone program below. **You do not need Python.**
+That's all if you use the standalone program below. **You do not need Python.**
 
-Works in Windows Terminal, PowerShell and `cmd.exe`.
+WinMonitor works in Windows Terminal, PowerShell, and `cmd.exe`.
 
 ---
 
 ## Download and install
 
-Two ways. Pick the first one unless you intend to work on the code.
+There are two ways to use WinMonitor.
 
-### Option A — the standalone program (no Python needed)
+### Option A — standalone program
 
-### ⬇ [**Download winmonitor.exe**](https://github.com/Fevzierenn/WinMonitor/releases/latest/download/winmonitor.exe)
+**No Python required.**
 
-One 20 MB file. It is the whole application with Python built in. Put it
-anywhere you like — `C:\Tools\winmonitor.exe` is a reasonable home — and run it:
+[Download winmonitor.exe](https://github.com/Fevzierenn/WinMonitor/releases/latest/download/winmonitor.exe)
+
+The executable is a single file containing the application and Python runtime.
+
+For example:
 
 ```bash
 C:\Tools\winmonitor.exe
 ```
 
-Nothing to install, nothing to uninstall. Delete the file and it is gone.
+Nothing needs to be installed or uninstalled. Delete the executable to remove it.
 
-Verify the download if you want to (it should match the checksum on the
-[release page](https://github.com/Fevzierenn/WinMonitor/releases/latest)):
+To verify the download:
 
-```bash
+```powershell
 powershell -c "(Get-FileHash winmonitor.exe -Algorithm SHA256).Hash"
 ```
 
-<details>
-<summary><b>"Windows protected your PC" — what to do</b></summary>
+The result should match the checksum published on the release page.
 
-The program is not code-signed (a signing certificate costs money), so
-SmartScreen warns about it the first time, as it does for any unsigned program
-without a download reputation:
+### Windows SmartScreen
+
+The executable is currently not code-signed, so Windows SmartScreen may show a
+warning the first time you run it.
+
+If you trust the release:
 
 1. Click **More info**
 2. Click **Run anyway**
 
-Once only. If you would rather not, use Option B instead — installing from
-source has no such prompt.
+Alternatively, use Option B and run the project from source.
 
-</details>
+### Add WinMonitor to your PATH
 
-To type `winmonitor` from anywhere instead of the full path, add its folder to
-your PATH, or create shortcuts:
+You can add the executable directory to your PATH, or use the included shortcut
+installer:
 
-```bash
+```powershell
 powershell -ExecutionPolicy Bypass -File scripts\install-shortcuts.ps1 -ExePath C:\Tools\winmonitor.exe
 ```
 
-That puts **WinMonitor** on your desktop and in the Start Menu, plus a
-**WinMonitor (Administrator)** entry. Undo with `-Uninstall`.
+This creates:
 
-> Startup takes about **2 seconds**: a single-file build unpacks itself each
-> time it runs. Option B starts instantly, which is worth having if you run it
-> constantly.
+- WinMonitor desktop shortcut
+- WinMonitor Start Menu shortcut
+- WinMonitor Administrator shortcut
 
-### Option B — install with Python (for developers, and faster startup)
+Undo with:
 
-Needs **Python 3.12 or newer** — check with `python --version`. If you do not
-have it, get it from [python.org/downloads](https://www.python.org/downloads/)
-and tick **"Add python.exe to PATH"** in the installer.
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install-shortcuts.ps1 -Uninstall
+```
 
-There is no PyPI package, so `pip install winmonitor` will not work. Clone the
-repository instead:
+The standalone executable takes roughly two seconds to start because the bundled
+application unpacks itself when launched.
+
+### Option B — install with Python
+
+For developers and faster startup, use Python 3.12+.
+
+Check your Python version:
+
+```bash
+python --version
+```
+
+If Python is not installed, get it from
+[python.org](https://www.python.org/downloads/) and enable
+**Add python.exe to PATH** during installation.
+
+There is no PyPI package. Clone the repository instead:
 
 ```bash
 git clone https://github.com/Fevzierenn/WinMonitor.git
 cd WinMonitor
 ```
 
-Then run:
+Install in editable mode:
 
 ```bash
 pip install -e .
 ```
 
-Then check it:
+Check the installation:
 
 ```bash
 winmonitor --version
 ```
 
-You should see `winmonitor 1.0.0`.
+Expected output:
 
-<details>
-<summary><b>If you get "winmonitor is not recognised as a command"</b></summary>
+```text
+winmonitor 1.0.0
+```
 
-pip installed the program into a folder that is not on your PATH. It still
-works — just use this form, which does exactly the same thing:
+If `winmonitor` is not recognised:
 
 ```bash
 python -m winmonitor
 ```
 
-To fix it properly: the pip output during install printed a warning naming the
-folder (usually `%APPDATA%\Python\Python312\Scripts`). Add it to your PATH, then
-open a **new** terminal.
-
-</details>
-
-Shortcuts work the same way, and find the program by themselves:
-
-```bash
-powershell -ExecutionPolicy Bypass -File scripts\install-shortcuts.ps1
-```
+The pip installer may have placed the executable in a directory that is not on
+your PATH. Add the directory shown by pip to PATH and open a new terminal.
 
 ---
 
-## Using it
+## Usage
 
-### The live interface
+### Live interface
+
+Start the interactive monitor:
 
 ```bash
 winmonitor
 ```
 
-Four views, one key each:
+Use one key to switch between views:
 
 | Key | View |
 |---|---|
-| <kbd>S</kbd> | **System** — CPU, memory, disk, network, uptime, development ports |
-| <kbd>P</kbd> | **Processes** — everything running, sorted by CPU |
-| <kbd>O</kbd> | **Ports** — what is listening, and who owns it |
-| <kbd>C</kbd> | **Connections** — active TCP/UDP sockets |
+| `S` | System — CPU, memory, disk, network, uptime, development ports |
+| `P` | Processes — running processes, sorted by CPU |
+| `O` | Ports — listening ports and their owners |
+| `C` | Connections — active TCP/UDP sockets |
 
-Getting around:
+Navigation:
 
-| Key | Does |
+| Key | Action |
 |---|---|
-| <kbd>↑</kbd> <kbd>↓</kbd> | Move the cursor |
-| <kbd>Enter</kbd> | Full details for the selected row |
-| <kbd>/</kbd> | Search — type `port 8080` or `process java`, press Enter |
-| <kbd>Esc</kbd> | Close the search or a dialog |
-| <kbd>N</kbd> / <kbd>I</kbd> | Change the sort column / reverse it |
-| <kbd>R</kbd> | Refresh now |
-| <kbd>Space</kbd> | Pause the live refresh |
-| <kbd>Y</kbd> | Show or hide Windows' own processes |
-| <kbd>L</kbd> | Ports: listening only, or every socket |
-| <kbd>E</kbd> | Export the current view to JSON |
-| <kbd>?</kbd> | Help |
-| <kbd>Q</kbd> | Quit |
+| `↑` `↓` | Move the cursor |
+| `Enter` | Show details for the selected row |
+| `/` | Search |
+| `Esc` | Close search or dialog |
+| `N` / `I` | Change sort column / reverse sort |
+| `R` | Refresh immediately |
+| `Space` | Pause live refresh |
+| `Y` | Show or hide Windows processes |
+| `L` | Show listening ports only / all sockets |
+| `E` | Export current view |
+| `?` | Show help |
+| `Q` | Quit |
 
-Stopping something:
+### Stopping a process
 
-| Key | Does |
-|---|---|
-| <kbd>K</kbd> | **Stop the selected process.** Shows what it is and which ports it holds, asks <kbd>Y</kbd>/<kbd>N</kbd>, done |
-| <kbd>F</kbd> | **Force stop** — for something that will not go quietly. Asks you to type `KILL` |
-
-### From the command line
-
-Every view is also a one-shot command, so it works in scripts:
-
-```bash
-winmonitor ports                    # what is listening
-winmonitor ports --dev              # only development ports
-winmonitor processes -n 20          # top 20 by CPU
-winmonitor connections              # active sockets
-winmonitor system                   # the dashboard, once
-winmonitor dev                      # development ports only
+```text
+K    Stop the selected process
+F    Force stop
 ```
 
-Looking things up:
+`K` shows the process and its ports, then asks for confirmation.
+
+`F` is for processes that will not close normally and requires you to type
+`KILL`.
+
+### Command line
+
+Every major view is also available as a one-shot command:
 
 ```bash
-winmonitor port 8080                # who has this port?
-winmonitor process 15240            # everything about this PID
-winmonitor process java             # ...or by name
+winmonitor ports
+winmonitor ports --dev
+winmonitor processes -n 20
+winmonitor connections
+winmonitor system
+winmonitor dev
 ```
 
-Stopping things:
+Look up a port or process:
 
 ```bash
-winmonitor kill 15240               # asks first
-winmonitor kill-port 8080           # finds the owner, asks, frees the port
-winmonitor kill-port 8080 --force   # for a stubborn one
-winmonitor kill 15240 --yes         # no prompt, for scripts
+winmonitor port 8080
+winmonitor process 15240
+winmonitor process java
 ```
 
-Saving things:
+Stop a process:
+
+```bash
+winmonitor kill 15240
+winmonitor kill-port 8080
+winmonitor kill-port 8080 --force
+winmonitor kill 15240 --yes
+```
+
+Export data:
 
 ```bash
 winmonitor export ports ports.csv
@@ -296,190 +318,244 @@ winmonitor export processes processes.json
 winmonitor export connections connections.json
 ```
 
-`--help` works on everything, including sub-commands:
-`winmonitor kill-port --help`.
+Every command also supports `--help`:
 
-### Settings
+```bash
+winmonitor kill-port --help
+```
 
-It works out of the box. To change anything:
+---
+
+## Settings
+
+WinMonitor works out of the box.
+
+To generate a configuration file:
 
 ```bash
 winmonitor config --write config.toml
 ```
 
-That writes a file listing every option with a comment explaining it — refresh
-speed, which protocols to show, sort order and so on. Keep it next to the
-program, or put it at `%APPDATA%\winmonitor\config.toml` to apply everywhere.
+The generated file documents the available options, including refresh speed,
+protocols, and sorting.
+
+To see the active configuration:
 
 ```bash
 winmonitor config
 ```
 
-shows what is currently in effect and which file it came from.
+You can keep the configuration next to the program or place it at:
+
+```text
+%APPDATA%\winmonitor\config.toml
+```
 
 ---
 
-## Do I need to run as Administrator?
+## Administrator mode
 
-**Usually not.** The process list, port list and connection list are complete
-either way.
+WinMonitor usually does **not** require Administrator privileges.
 
-Administrator rights change exactly two things:
+Administrator rights mainly affect:
 
-- Seeing the **file path, command line and owner** of processes belonging to
-  *other* users
-- **Stopping** another user's process, or a Windows service
+- File paths, command lines, and owners of processes belonging to other users
+- Stopping another user's process
+- Stopping Windows services
 
-WinMonitor never elevates itself and never raises a UAC prompt on its own. When
-an action needs rights you do not have, it says so and stops.
+WinMonitor does not elevate itself and does not trigger a UAC prompt automatically.
 
-To run elevated: press <kbd>Win</kbd>, type "Windows Terminal", right-click →
-**Run as administrator**. Or use the **WinMonitor (Administrator)** shortcut.
+To run as Administrator, open Windows Terminal as Administrator or use the
+**WinMonitor (Administrator)** shortcut.
 
 ---
 
-## Is it safe?
+## Safety
 
-Stopping a process is destructive, and it is treated that way:
+Stopping a process is destructive, so WinMonitor treats it carefully.
 
-- **Nothing is ever stopped without you confirming it.** No exceptions.
-- The confirmation shows the **name, the PID and every port** the process holds,
-  so you can check it is the right one before agreeing.
-- Processes that keep Windows running — `csrss.exe`, `wininit.exe`, `lsass.exe`
-  and friends — are detected and require you to **type `KILL`**. `--yes` is
-  refused for them outright.
-- A process that **has a window and is still open** after being asked to close is
-  never force-stopped automatically. It may be showing you a "save changes?"
-  prompt, and that work is not WinMonitor's to throw away.
-- After freeing a port it **checks again** and tells you the truth — including
-  the case where the listener is gone but sockets are still in `TIME_WAIT`,
-  which is why a server sometimes cannot restart immediately.
+- Processes are never stopped without confirmation.
+- The confirmation shows the process name, PID, and ports it owns.
+- Critical Windows processes require typing `KILL`.
+- `--yes` is refused for protected critical processes.
+- A process with an open window is not force-stopped automatically after a normal
+  close request.
+- After freeing a port, WinMonitor checks again and reports the actual state.
+- `TIME_WAIT` sockets are reported separately from active listeners.
 
-### About "killing a port"
+### About `kill-port`
 
-You cannot kill a port. A port is a number in a socket owned by a process, and
-Windows frees it when that process lets go. So `kill-port 8080` finds the
-process that owns 8080, asks you about **that process**, stops it, and then
-checks whether the port came free. It never pretends otherwise.
+A port itself cannot be killed.
+
+A port number belongs to a socket owned by a process. Therefore:
+
+```bash
+winmonitor kill-port 8080
+```
+
+means:
+
+1. Find the process owning port `8080`
+2. Show the process
+3. Ask for confirmation
+4. Stop the process
+5. Check whether the port is free
 
 ---
 
 ## Troubleshooting
 
-**"winmonitor is not recognised"** — see the box under
-[Option B](#option-b--install-with-python-for-developers-and-faster-startup).
-Short answer: use `python -m winmonitor`, or use the standalone
-`winmonitor.exe`, which has no PATH to get wrong.
+### `winmonitor` is not recognised
 
-**Some rows show `n/a` for the user, or "not available" for the path** — those
-processes belong to another user or to Windows. Run as Administrator to see
-them.
+Use:
 
-**A port shows as in use but nothing is listening** — the socket is in
-`TIME_WAIT`, winding down. WinMonitor says so explicitly. It clears on its own
-within a couple of minutes.
+```bash
+python -m winmonitor
+```
 
-**CPU shows `--` for a moment on startup** — CPU usage is the difference between
-two readings, and the first one has nothing to compare against. It fills in a
-second later. It shows `--` rather than a made-up `0.0%`.
+Or use the standalone `winmonitor.exe`.
 
-**"Access denied" when stopping something** — either it belongs to another user
-(run as Administrator) or Windows protects it. Anti-malware services and a few
-system processes refuse to be stopped even by an administrator. That is the
-operating system, not WinMonitor.
+### User or executable path shows `n/a`
 
-**Something looks wrong** — run `winmonitor doctor`. It checks every data source
-and reports which are working.
+The process may belong to another user or Windows itself.
 
-**Logs** are at `%LOCALAPPDATA%\winmonitor\winmonitor.log`. Command lines and
-user names are never written to them.
+Run WinMonitor as Administrator to obtain additional information.
+
+### A port is in use but nothing is listening
+
+The socket may be in `TIME_WAIT`.
+
+WinMonitor reports this explicitly. The socket normally clears automatically.
+
+### CPU shows `--` at startup
+
+CPU usage is calculated from the difference between two readings.
+
+The first reading has no previous value, so WinMonitor displays `--` rather than
+inventing a number.
+
+### `Access denied` when stopping a process
+
+The process may belong to another user, may require Administrator privileges, or
+may be protected by Windows.
+
+### Something looks wrong
+
+Run:
+
+```bash
+winmonitor doctor
+```
+
+This checks the available data sources and reports which ones are working.
+
+### Logs
+
+Logs are stored at:
+
+```text
+%LOCALAPPDATA%\winmonitor\winmonitor.log
+```
+
+Command lines and user names are not written to the logs.
 
 ---
 
 ## Known limits
 
-- **Windows only.** It uses Windows-specific APIs throughout.
-- **No per-process network speed.** Windows does not expose bytes-per-process
-  without ETW tracing, so the dashboard shows machine-wide RX/TX only. A
-  per-process figure would have to be invented, so there isn't one.
-- **The System Idle Process is hidden.** It is not a real process; its "CPU
-  time" is time the machine spent doing nothing.
-- **Some processes cannot be stopped at all**, by anyone — see above.
+- Windows only. WinMonitor uses Windows-specific APIs.
+- There is no per-process network speed measurement. Windows does not expose
+  this directly without ETW tracing.
+- The System Idle Process is hidden because its CPU time represents idle time.
+- Some protected Windows processes cannot be stopped.
 
 ---
 
-## Sharing it
+## Sharing WinMonitor
 
-**Send them the [latest release](https://github.com/Fevzierenn/WinMonitor/releases/latest).**
-One file, nothing to install, no Python on their machine. Mention the
-SmartScreen prompt (see
-[Option A](#option-a--the-standalone-program-no-python-needed)) so the warning
-does not put them off.
+Send people the latest release:
 
-### Rebuilding the .exe
+[Download the latest release](https://github.com/Fevzierenn/WinMonitor/releases/latest)
 
-After changing the code, rebuild it:
+The standalone release is a single executable and does not require Python.
+
+If users see a SmartScreen warning, refer them to the installation section above.
+
+---
+
+## Building the executable
+
+Install PyInstaller:
 
 ```bash
 pip install pyinstaller
+```
+
+Build:
+
+```bash
 python -m PyInstaller packaging/winmonitor.spec --noconfirm
 ```
 
-`dist\winmonitor.exe` is the result, about 20 MB, and takes roughly a minute to
-build. The recipe lives in [`packaging/winmonitor.spec`](packaging/winmonitor.spec)
-and is commented with the parts PyInstaller cannot work out on its own — chiefly
-the UI stylesheet and Textual's lazily imported widgets.
+The resulting executable is:
 
-### Publishing a release
+```text
+dist\winmonitor.exe
+```
+
+The PyInstaller specification is located at:
+
+```text
+packaging\winmonitor.spec
+```
+
+---
+
+## Publishing a release
+
+Create and push a Git tag:
 
 ```bash
 git tag -a v1.2.3 -m "WinMonitor 1.2.3"
 git push origin v1.2.3
+```
+
+Create the GitHub release:
+
+```bash
 gh release create v1.2.3 "dist\winmonitor.exe#winmonitor.exe (standalone - no Python needed)" --title "WinMonitor 1.2.3" --notes-file notes.md
 ```
 
-Publish the SHA256 in the notes so people can check what they downloaded — the
-binary is unsigned, so that checksum is the only thing they have to verify it
-with:
+Publish the SHA256 checksum in the release notes:
 
-```bash
+```powershell
 powershell -c "(Get-FileHash dist\winmonitor.exe -Algorithm SHA256).Hash"
-```
-
-### For people who do have Python
-
-A normal wheel is smaller and starts faster:
-
-```bash
-pip install build
-python -m build
-```
-
-That produces `dist\winmonitor-1.0.0-py3-none-any.whl`, installed with:
-
-```bash
-pip install winmonitor-1.0.0-py3-none-any.whl
 ```
 
 ---
 
 ## For developers
 
-Architecture, the Windows APIs it uses, the test suite and development setup are
-in **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+Architecture, Windows APIs, tests, and development setup are documented in:
 
-Short version: 358 tests, a few seconds to run, and none of them depend on what
-happens to be running on your machine.
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+
+Run the development installation:
 
 ```bash
 pip install -e ".[dev]"
+```
+
+Run the tests:
+
+```bash
 python -m pytest
 ```
+
+The project currently contains **358 tests**.
 
 ---
 
 ## Licence
 
-MIT.
-#   W i n M o n i t o r  
- 
+MIT
