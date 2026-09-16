@@ -1,0 +1,7 @@
+# Runtime dependencies for WinMonitor (Windows 11, Python 3.12+)
+psutil>=5.9          # process / network / system metrics via native Windows APIs
+textual>=0.80        # terminal user interface framework
+rich>=13.7           # rendering primitives used by Textual and the CLI output
+typer>=0.12          # command line interface
+pydantic>=2.9        # data models and configuration validation
+pywin32>=306         # optional Windows API extras (ctypes is used as the default path)
