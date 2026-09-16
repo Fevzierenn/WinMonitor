@@ -2,6 +2,12 @@
 
 **Find out what is using a port, and stop it — without leaving the terminal.**
 
+[![Download](https://img.shields.io/github/v/release/Fevzierenn/WinMonitor?label=download&color=2f81f7)](https://github.com/Fevzierenn/WinMonitor/releases/latest)
+[![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078d4)](https://github.com/Fevzierenn/WinMonitor/releases/latest)
+[![Python](https://img.shields.io/badge/python-3.12%2B%20(optional)-3776ab)](#option-b--install-with-python-for-developers-and-faster-startup)
+[![Tests](https://img.shields.io/badge/tests-358%20passing-3fb950)](docs/ARCHITECTURE.md#testing)
+[![Licence](https://img.shields.io/badge/licence-MIT-lightgrey)](#licence)
+
 WinMonitor is a system monitor for Windows 11 that answers the question
 developers actually ask twenty times a day:
 
@@ -53,7 +59,7 @@ Task Manager tells you about processes. Resource Monitor tells you about ports.
 Neither connects the two quickly, and neither runs in the terminal you are
 already typing in. WinMonitor does three things well:
 
-| | |
+| What | How it helps |
 |---|---|
 | **Port → process** | "Who has 8080?" — with the command line, so you know *which* of your six `java.exe` processes it is |
 | **Process → port** | "What is this thing listening on?" |
@@ -110,22 +116,25 @@ Works in Windows Terminal, PowerShell and `cmd.exe`.
 
 Two ways. Pick the first one unless you intend to work on the code.
 
-> **Heads up:** WinMonitor is not published anywhere yet — no PyPI, no public
-> repository — so `pip install winmonitor` will **not** work and there is no
-> download URL. Both routes start from the project folder, however it reaches
-> you. To put it somewhere others can download it, see [Sharing it](#sharing-it).
-
 ### Option A — the standalone program (no Python needed)
 
-Take **`dist\winmonitor.exe`** out of the project folder. That single 20 MB file
-is the whole application, Python included. Put it anywhere you like —
-`C:\Tools\winmonitor.exe` is a reasonable home — and run it:
+### ⬇ [**Download winmonitor.exe**](https://github.com/Fevzierenn/WinMonitor/releases/latest/download/winmonitor.exe)
+
+One 20 MB file. It is the whole application with Python built in. Put it
+anywhere you like — `C:\Tools\winmonitor.exe` is a reasonable home — and run it:
 
 ```bash
 C:\Tools\winmonitor.exe
 ```
 
 Nothing to install, nothing to uninstall. Delete the file and it is gone.
+
+Verify the download if you want to (it should match the checksum on the
+[release page](https://github.com/Fevzierenn/WinMonitor/releases/latest)):
+
+```bash
+powershell -c "(Get-FileHash winmonitor.exe -Algorithm SHA256).Hash"
+```
 
 <details>
 <summary><b>"Windows protected your PC" — what to do</b></summary>
@@ -162,8 +171,15 @@ Needs **Python 3.12 or newer** — check with `python --version`. If you do not
 have it, get it from [python.org/downloads](https://www.python.org/downloads/)
 and tick **"Add python.exe to PATH"** in the installer.
 
-Open a terminal in the project folder (in File Explorer, click the address bar,
-type `wt`, press Enter) and run:
+There is no PyPI package, so `pip install winmonitor` will not work. Clone the
+repository instead:
+
+```bash
+git clone https://github.com/Fevzierenn/WinMonitor.git
+cd WinMonitor
+```
+
+Then run:
 
 ```bash
 pip install -e .
@@ -394,8 +410,9 @@ user names are never written to them.
 
 ## Sharing it
 
-**The easy way: send them `dist\winmonitor.exe`.** One file, nothing to install,
-no Python on their machine. Tell them about the SmartScreen prompt (see
+**Send them the [latest release](https://github.com/Fevzierenn/WinMonitor/releases/latest).**
+One file, nothing to install, no Python on their machine. Mention the
+SmartScreen prompt (see
 [Option A](#option-a--the-standalone-program-no-python-needed)) so the warning
 does not put them off.
 
@@ -412,6 +429,22 @@ python -m PyInstaller packaging/winmonitor.spec --noconfirm
 build. The recipe lives in [`packaging/winmonitor.spec`](packaging/winmonitor.spec)
 and is commented with the parts PyInstaller cannot work out on its own — chiefly
 the UI stylesheet and Textual's lazily imported widgets.
+
+### Publishing a release
+
+```bash
+git tag -a v1.2.3 -m "WinMonitor 1.2.3"
+git push origin v1.2.3
+gh release create v1.2.3 "dist\winmonitor.exe#winmonitor.exe (standalone - no Python needed)" --title "WinMonitor 1.2.3" --notes-file notes.md
+```
+
+Publish the SHA256 in the notes so people can check what they downloaded — the
+binary is unsigned, so that checksum is the only thing they have to verify it
+with:
+
+```bash
+powershell -c "(Get-FileHash dist\winmonitor.exe -Algorithm SHA256).Hash"
+```
 
 ### For people who do have Python
 
