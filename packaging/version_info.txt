@@ -1,0 +1,36 @@
+# Windows version resource for winmonitor.exe.
+# Without this the file shows blank Details in Explorer, which looks like
+# something worth being suspicious of.
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(1, 0, 0, 0),
+    prodvers=(1, 0, 0, 0),
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0),
+  ),
+  kids=[
+    StringFileInfo(
+      [
+        StringTable(
+          '040904B0',
+          [
+            StringStruct('CompanyName', 'WinMonitor contributors'),
+            StringStruct('FileDescription',
+                         'Terminal system, process and port monitor for Windows 11'),
+            StringStruct('FileVersion', '1.0.0'),
+            StringStruct('InternalName', 'winmonitor'),
+            StringStruct('LegalCopyright', 'MIT licence'),
+            StringStruct('OriginalFilename', 'winmonitor.exe'),
+            StringStruct('ProductName', 'WinMonitor'),
+            StringStruct('ProductVersion', '1.0.0'),
+          ],
+        )
+      ]
+    ),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])]),
+  ],
+)
