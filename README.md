@@ -99,11 +99,8 @@ It also recognises the ports you care about and names what is on them:
 ## Requirements
 
 - **Windows 11** (or Windows 10), 64-bit
-- **Python 3.12 or newer** — check with `python --version`
 
-If you do not have Python, get it from
-[python.org/downloads](https://www.python.org/downloads/) and tick
-**"Add python.exe to PATH"** in the installer.
+That is all, if you use the standalone program below. **You do not need Python.**
 
 Works in Windows Terminal, PowerShell and `cmd.exe`.
 
@@ -111,31 +108,68 @@ Works in Windows Terminal, PowerShell and `cmd.exe`.
 
 ## Download and install
 
-> **Heads up:** WinMonitor is not published on PyPI and has no public
-> repository yet, so `pip install winmonitor` will **not** work and there is no
-> download link to give you. You install it from the project folder. To put it
-> somewhere other people can get it, see [Sharing it](#sharing-it).
+Two ways. Pick the first one unless you intend to work on the code.
 
-### 1. Get the folder
+> **Heads up:** WinMonitor is not published anywhere yet — no PyPI, no public
+> repository — so `pip install winmonitor` will **not** work and there is no
+> download URL. Both routes start from the project folder, however it reaches
+> you. To put it somewhere others can download it, see [Sharing it](#sharing-it).
 
-Copy the `PortMonitoring-terminal` folder onto your machine — USB stick,
-network share, zip, however it reaches you. Everything needed is inside it.
+### Option A — the standalone program (no Python needed)
 
-### 2. Open a terminal in that folder
+Take **`dist\winmonitor.exe`** out of the project folder. That single 20 MB file
+is the whole application, Python included. Put it anywhere you like —
+`C:\Tools\winmonitor.exe` is a reasonable home — and run it:
 
-In File Explorer, click the address bar, type `wt` (or `powershell`), press
-Enter.
+```bash
+C:\Tools\winmonitor.exe
+```
 
-### 3. Install it
+Nothing to install, nothing to uninstall. Delete the file and it is gone.
+
+<details>
+<summary><b>"Windows protected your PC" — what to do</b></summary>
+
+The program is not code-signed (a signing certificate costs money), so
+SmartScreen warns about it the first time, as it does for any unsigned program
+without a download reputation:
+
+1. Click **More info**
+2. Click **Run anyway**
+
+Once only. If you would rather not, use Option B instead — installing from
+source has no such prompt.
+
+</details>
+
+To type `winmonitor` from anywhere instead of the full path, add its folder to
+your PATH, or create shortcuts:
+
+```bash
+powershell -ExecutionPolicy Bypass -File scripts\install-shortcuts.ps1 -ExePath C:\Tools\winmonitor.exe
+```
+
+That puts **WinMonitor** on your desktop and in the Start Menu, plus a
+**WinMonitor (Administrator)** entry. Undo with `-Uninstall`.
+
+> Startup takes about **2 seconds**: a single-file build unpacks itself each
+> time it runs. Option B starts instantly, which is worth having if you run it
+> constantly.
+
+### Option B — install with Python (for developers, and faster startup)
+
+Needs **Python 3.12 or newer** — check with `python --version`. If you do not
+have it, get it from [python.org/downloads](https://www.python.org/downloads/)
+and tick **"Add python.exe to PATH"** in the installer.
+
+Open a terminal in the project folder (in File Explorer, click the address bar,
+type `wt`, press Enter) and run:
 
 ```bash
 pip install -e .
 ```
 
-A few seconds. It pulls in the five libraries it needs: psutil, textual, rich,
-typer and pydantic.
-
-### 4. Check it worked
+Then check it:
 
 ```bash
 winmonitor --version
@@ -159,15 +193,11 @@ open a **new** terminal.
 
 </details>
 
-### 5. Optional — desktop and Start Menu shortcuts
+Shortcuts work the same way, and find the program by themselves:
 
 ```bash
 powershell -ExecutionPolicy Bypass -File scripts\install-shortcuts.ps1
 ```
-
-This adds a **WinMonitor** icon to your desktop and Start Menu, plus a
-**WinMonitor (Administrator)** entry for when you need elevated rights. Undo it
-with the same command plus `-Uninstall`.
 
 ---
 
@@ -321,7 +351,9 @@ checks whether the port came free. It never pretends otherwise.
 ## Troubleshooting
 
 **"winmonitor is not recognised"** — see the box under
-[step 4](#4-check-it-worked). Short answer: use `python -m winmonitor`.
+[Option B](#option-b--install-with-python-for-developers-and-faster-startup).
+Short answer: use `python -m winmonitor`, or use the standalone
+`winmonitor.exe`, which has no PATH to get wrong.
 
 **Some rows show `n/a` for the user, or "not available" for the path** — those
 processes belong to another user or to Windows. Run as Administrator to see
@@ -362,21 +394,39 @@ user names are never written to them.
 
 ## Sharing it
 
-To give WinMonitor to someone else, build an installable package:
+**The easy way: send them `dist\winmonitor.exe`.** One file, nothing to install,
+no Python on their machine. Tell them about the SmartScreen prompt (see
+[Option A](#option-a--the-standalone-program-no-python-needed)) so the warning
+does not put them off.
+
+### Rebuilding the .exe
+
+After changing the code, rebuild it:
+
+```bash
+pip install pyinstaller
+python -m PyInstaller packaging/winmonitor.spec --noconfirm
+```
+
+`dist\winmonitor.exe` is the result, about 20 MB, and takes roughly a minute to
+build. The recipe lives in [`packaging/winmonitor.spec`](packaging/winmonitor.spec)
+and is commented with the parts PyInstaller cannot work out on its own — chiefly
+the UI stylesheet and Textual's lazily imported widgets.
+
+### For people who do have Python
+
+A normal wheel is smaller and starts faster:
 
 ```bash
 pip install build
 python -m build
 ```
 
-That produces `dist\winmonitor-1.0.0-py3-none-any.whl`, which they install with:
+That produces `dist\winmonitor-1.0.0-py3-none-any.whl`, installed with:
 
 ```bash
 pip install winmonitor-1.0.0-py3-none-any.whl
 ```
-
-They still need Python 3.12+. Shipping it to people without Python would mean
-bundling it with something like PyInstaller — that is not set up yet.
 
 ---
 
