@@ -20,4 +20,4 @@ dist/
 # Local configuration and exports
 /config.toml
 *.log
-.claude
+.claude/
