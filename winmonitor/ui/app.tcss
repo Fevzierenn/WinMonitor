@@ -112,6 +112,64 @@ DataTable > .datatable--header {
     color: $accent;
 }
 
+/* ------------------------------------------------------------ AI Usage --- */
+
+AIUsagePane {
+    height: 1fr;
+    padding: 1;
+}
+
+AIUsagePane.loading {
+    background: $error 10%;
+}
+
+#ai-filters {
+    height: 3;
+    background: $panel;
+}
+
+.ai-filter-label {
+    width: 9;
+    content-align: left middle;
+    color: $accent;
+}
+
+#ai-source {
+    width: 25;
+}
+
+#ai-report {
+    width: 16;
+}
+
+#ai-refresh {
+    margin-left: 2;
+}
+
+#ai-message, #ai-cost-note, #ai-totals {
+    height: auto;
+    padding: 0 1;
+}
+
+#ai-table {
+    height: 1fr;
+}
+
+#ai-wait {
+    height: 1fr;
+    content-align: center middle;
+    text-align: center;
+    text-style: bold;
+    color: $text;
+    background: $error 20%;
+    border: round $error 50%;
+    margin: 1;
+}
+
+#ai-wait.hidden, #ai-table.hidden {
+    display: none;
+}
+
 /* -------------------------------------------------------------- search --- */
 
 #search-row {

@@ -21,7 +21,7 @@ __all__ = ["AppState", "Snapshot", "View"]
 #: The screens the UI can show, in navigation order.
 View = str
 
-VIEWS: tuple[str, ...] = ("dashboard", "processes", "ports", "connections")
+VIEWS: tuple[str, ...] = ("dashboard", "processes", "ports", "connections", "ai_usage")
 
 
 @dataclass(slots=True)
