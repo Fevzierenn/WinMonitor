@@ -21,3 +21,7 @@ dist/
 /config.toml
 *.log
 .claude/
+.agents/
+.docs/
+#only for root/AGENTS.md
+/AGENTS.md
