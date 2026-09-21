@@ -289,6 +289,7 @@ KEY_HELP: tuple[tuple[str, str], ...] = (
     ("p", "Processes"),
     ("o", "Ports"),
     ("c", "Connections"),
+    ("a", "AI Usage (source and report filters)"),
     ("d", "Details for the selected row"),
     ("/", "Search in the current view"),
     ("escape", "Close the search, dialog or details screen"),

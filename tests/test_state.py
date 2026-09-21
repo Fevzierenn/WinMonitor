@@ -121,8 +121,8 @@ class TestConstruction:
         assert state.visible_connections() == []
         assert state.developer_ports() == []
 
-    def test_views_are_the_documented_four(self):
-        assert VIEWS == ("dashboard", "processes", "ports", "connections")
+    def test_views_include_ai_usage(self):
+        assert VIEWS == ("dashboard", "processes", "ports", "connections", "ai_usage")
 
 
 class TestSnapshot:

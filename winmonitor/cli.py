@@ -643,8 +643,13 @@ def cmd_keys() -> None:
 
 
 @app.command("doctor")
-def cmd_doctor() -> None:
+def cmd_doctor(
+    test_ai_usage: Annotated[
+        bool, typer.Option("--test-ai-usage", help="Run ccusage and list detected local sources.")
+    ] = False,
+) -> None:
     """Check which data sources are available on this machine."""
+    from .services.ai_usage import AIUsageError, CCUsageAdapter, source_name
     from .utils import windows as win
 
     console.print("[bold]WinMonitor environment check[/bold]\n")
@@ -681,6 +686,28 @@ def cmd_doctor() -> None:
         )
     )
     rows.append(("Refresh duration", snapshot.duration < 1.0, f"{snapshot.duration * 1000:.0f} ms"))
+
+    ai_provider = CCUsageAdapter()
+    ai_available = ai_provider.available()
+    rows.append(("AI Usage provider", ai_available, "ccusage"))
+    rows.append(
+        ("AI Usage execution method", ai_available, ai_provider.execution_method or "unavailable")
+    )
+    if test_ai_usage and ai_available:
+        try:
+            sources = ai_provider.get_detected_sources()
+            rows.append(("AI Usage status", True, "Ready"))
+            rows.append(
+                (
+                    "Detected AI sources",
+                    bool(sources),
+                    ", ".join(map(source_name, sources)) or "none",
+                )
+            )
+        except AIUsageError as exc:
+            rows.append(("AI Usage status", False, str(exc)))
+    else:
+        rows.append(("AI Usage status", None, "Run doctor --test-ai-usage to test ccusage"))
 
     table = Table(show_header=True)
     table.add_column("CHECK")

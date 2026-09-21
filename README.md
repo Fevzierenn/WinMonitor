@@ -234,6 +234,29 @@ your PATH. Add the directory shown by pip to PATH and open a new terminal.
 
 ## Usage
 
+### AI Usage
+
+Press **A** in the live interface to open AI Usage. WinMonitor runs
+[ccusage](https://ccusage.com/) against local coding-agent usage records and displays
+its JSON reports. The Source selector lists agents detected in the local ccusage
+data; choose **All Sources** for a unified report. The Report selector switches
+between **Daily**, **Weekly**, **Monthly**, and **Session**. Press **R** or use
+**Refresh** to reload the selected report. WinMonitor does not parse the agents'
+logs itself or send usage data to a WinMonitor service. Which coding agents are
+supported depends on the installed ccusage version.
+
+WinMonitor looks for an installed `ccusage` first, then `bunx ccusage`,
+`npx ccusage@latest`, and `pnpm dlx ccusage`. Install one of these launchers
+separately; the AI Usage page explains when none is available. To test the
+integration and list detected sources from the command line, run
+`winmonitor doctor --test-ai-usage`.
+
+The displayed cost is ccusage's **estimated API-equivalent cost** from token
+usage and model pricing. It may differ from actual subscription or billing
+charges. For direct access to the same source data, use commands such as
+`ccusage daily --json`, `ccusage weekly --json`, `ccusage monthly --json`,
+`ccusage session --json`, or `ccusage claude daily --json`.
+
 ### Live interface
 
 Start the interactive monitor:
