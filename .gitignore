@@ -17,7 +17,7 @@ build/
 dist/
 *.spec.bak
 
-# Local configuration and exports
+# Local configuration and exports.
 /config.toml
 *.log
 /.claude/

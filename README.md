@@ -273,6 +273,7 @@ Use one key to switch between views:
 | `P` | Processes — running processes, sorted by CPU |
 | `O` | Ports — listening ports and their owners |
 | `C` | Connections — active TCP/UDP sockets |
+| `A` | AI Usage — Shows AI Usage using ccusage |
 
 Navigation:
 
