@@ -20,8 +20,7 @@ dist/
 # Local configuration and exports
 /config.toml
 *.log
-.claude/
-.agents/
-.docs/
-#only for root/AGENTS.md
+/.claude/
+/.agents/
+/docs/
 /AGENTS.md
