@@ -253,9 +253,21 @@ models for the selected period. It comes from the same ccusage query
 `--by-agent` still work, just without the summary.
 
 ccusage re-reads every local agent log on each run, so a long history can take
-a minute. The wait panel counts the seconds, and each report stays cached for
-five minutes. If loads time out, raise `ai_usage_timeout` (seconds, default
-180) in `config.toml`.
+a minute. Each report stays cached in memory for five minutes, and the last
+successful ccusage output for every Source/Report combination is also kept on
+disk under `%LOCALAPPDATA%\winmonitor\ai-usage-cache`. When a saved copy
+exists, it is shown immediately, with its age ("Showing results from 12 min
+ago; refreshing..."), while ccusage runs in the background, and the fresh
+report replaces it when ready. If that refresh fails, the saved rows stay on
+screen next to the reason. Without a saved copy, the wait panel counts the
+seconds instead. Saved copies older than 30 days are removed automatically.
+Set `ai_usage_disk_cache = false` in `config.toml` to turn the disk cache off.
+If loads time out, raise `ai_usage_timeout` (seconds, default 180).
+
+Changing the Source or Report while a report is loading, pressing **Refresh**
+again, or closing WinMonitor stops the ccusage run that is no longer needed,
+including the Node.js processes it started, so abandoned runs do not keep
+reading logs in the background.
 
 WinMonitor looks for an installed `ccusage` first, then `bunx ccusage`,
 `npx ccusage@latest`, and `pnpm dlx ccusage`. Install one of these launchers

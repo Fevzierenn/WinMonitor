@@ -49,6 +49,7 @@ from ..exporters import export
 from ..models import PortInfo
 from ..services.ai_usage import AIUsageService, CCUsageAdapter
 from ..services.termination_service import TerminationPlan, TerminationResult
+from ..services.usage_cache import UsageCache
 from ..utils.formatting import format_clock
 from .pane import StandalonePane
 from .port_details import PortDetailsScreen
@@ -105,7 +106,8 @@ class WinMonitorApp(App[None]):
         # Replaceable before the app runs (the tests inject a fake provider);
         # the AI Usage pane receives it in compose().
         self.ai_usage: AIUsageService = AIUsageService(
-            CCUsageAdapter(timeout=settings.ai_usage_timeout)
+            CCUsageAdapter(timeout=settings.ai_usage_timeout),
+            disk_cache=UsageCache() if settings.ai_usage_disk_cache else None,
         )
 
     # -- layout ------------------------------------------------------------ #

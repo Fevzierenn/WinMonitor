@@ -23,7 +23,7 @@ from .base import (
     AIUsageReport,
     sources_in_report,
 )
-from .runner import run_command
+from .runner import CommandCancelled, run_command
 
 logger = logging.getLogger(__name__)
 
@@ -141,13 +141,28 @@ class CCUsageAdapter:
     def get_report(
         self, report_type: str, source: str | None = None, *, by_agent: bool = False
     ) -> AIUsageReport:
+        return self.get_report_output(report_type, source, by_agent=by_agent)[0]
+
+    def get_report_output(
+        self, report_type: str, source: str | None = None, *, by_agent: bool = False
+    ) -> tuple[AIUsageReport, str]:
+        """The report plus the exact stdout it was parsed from.
+
+        The service keeps that stdout on disk and later parses it again with
+        :func:`parse_output`, so a cached report takes the same path as a
+        fresh one.
+        """
         command = self.build_command(source, report_type, by_agent=by_agent)
-        return parse_output(self._execute(command), report_type, source)
+        stdout = self._execute(command)
+        return parse_output(stdout, report_type, source), stdout
 
     def _execute(self, command: list[str]) -> str:
         """Run ccusage and return its stdout, or raise :class:`AIUsageError`."""
         try:
             completed = run_command(command, self.timeout)
+        except CommandCancelled as exc:
+            logger.info("ccusage run cancelled: %s", command)
+            raise AIUsageError("cancelled", "The ccusage report was cancelled.") from exc
         except subprocess.TimeoutExpired as exc:
             logger.warning("ccusage timed out: %s", command)
             raise AIUsageError(
