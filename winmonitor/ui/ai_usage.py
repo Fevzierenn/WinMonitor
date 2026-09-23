@@ -7,6 +7,7 @@ result handling) so the app only has to call :meth:`AIUsagePane.activate` and
 
 from __future__ import annotations
 
+import logging
 import re
 import time
 from datetime import date
@@ -31,6 +32,8 @@ from ..services.ai_usage import (
 from ..utils.formatting import bar, format_compact, format_cost, truncate
 from .pane import StandalonePane
 from .table_pane import cell
+
+logger = logging.getLogger(__name__)
 
 _TOKEN_FIELDS = (
     ("inputTokens", "INPUT"),
@@ -276,6 +279,12 @@ class AIUsagePane(StandalonePane, Vertical):
             report, sources = self.service.load_report(report_type, source, refresh=refresh)
         except AIUsageError as exc:
             self.app.call_from_thread(self._on_error, request, exc)
+            return
+        except Exception as exc:
+            # A provider bug must cost one report, not the whole application.
+            logger.exception("AI Usage provider failed")
+            error = AIUsageError("runtime", f"AI Usage failed unexpectedly: {exc}")
+            self.app.call_from_thread(self._on_error, request, error)
             return
         self.app.call_from_thread(self._on_report, request, sources, report)
 

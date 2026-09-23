@@ -242,3 +242,31 @@ def state(settings, snapshot) -> AppState:
     app_state = AppState.from_settings(settings)
     app_state.snapshot = snapshot
     return app_state
+
+
+@pytest.fixture
+def make_app(snapshot, monkeypatch, tmp_path):
+    from winmonitor.services.ai_usage import AIUsageService
+    from winmonitor.ui.app import WinMonitorApp
+
+    from .app_harness import EmptyAIProvider, FakeController
+
+    """Build the app; ``reply`` is what every dialog answers."""
+    # Exports land in, and the Markdown view scans, an empty folder.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("winmonitor.ui.markdown_view.user_agent_files", lambda: [])
+
+    def build(reply=None):
+        # A long interval keeps timer ticks from rebuilding tables mid-test.
+        app = WinMonitorApp(Settings(refresh_interval=60_000), controller=FakeController(snapshot))
+        app.ai_usage = AIUsageService(EmptyAIProvider())
+        app.dialogs = []
+
+        async def answer(screen):
+            app.dialogs.append(screen)
+            return reply
+
+        app.push_screen_wait = answer
+        return app
+
+    return build

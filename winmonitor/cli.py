@@ -773,8 +773,30 @@ def cmd_doctor(
         console.print(f"\n[dim]{elevation_instructions()}[/dim]")
 
 
+def _safe_output_streams() -> None:
+    """Never crash on a character the console's code page cannot show.
+
+    On a cp1254 or cp1252 console, meter blocks or an emoji in a Markdown file
+    raised UnicodeEncodeError when output was piped or redirected. Redirected
+    output is written as UTF-8; an interactive console keeps its code page but
+    shows ``?`` for anything it cannot encode.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            if stream.isatty():
+                reconfigure(errors="replace")
+            else:
+                reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):  # pragma: no cover - exotic stream
+            continue
+
+
 def main() -> None:
     """Console script entry point."""
+    _safe_output_streams()
     try:
         app()
     except KeyboardInterrupt:  # pragma: no cover - interactive

@@ -212,10 +212,15 @@ MarkdownPane {
     height: 1fr;
 }
 
-#md-scroll {
+#md-scroll, #md-fast {
     height: 1fr;
     border: round $primary 40%;
     scrollbar-size-vertical: 1;
+}
+
+/* Small files use the interactive renderer, large ones the fast line view. */
+#md-scroll.hidden, #md-fast.hidden {
+    display: none;
 }
 
 /* -------------------------------------------------------------- search --- */

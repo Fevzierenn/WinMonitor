@@ -29,6 +29,7 @@ from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal
+from textual.css.query import NoMatches
 from textual.timer import Timer
 from textual.widgets import (
     Button,
@@ -189,6 +190,14 @@ class WinMonitorApp(App[None]):
         return targets
 
     def _on_snapshot(self, snapshot: Snapshot) -> None:
+        """Apply a new snapshot, unless the app is already shutting down."""
+        try:
+            self._apply_snapshot(snapshot)
+        except NoMatches:
+            # A refresh that finishes during shutdown finds the widgets gone.
+            logger.debug("Snapshot arrived after the interface was torn down")
+
+    def _apply_snapshot(self, snapshot: Snapshot) -> None:
         """Apply a new snapshot to the state and the visible pane."""
         first = not self.state.snapshot.processes
         self.state.snapshot = snapshot
@@ -207,7 +216,8 @@ class WinMonitorApp(App[None]):
 
     def _on_collection_failed(self, reason: str) -> None:
         self._last_error = reason
-        self.status.set_message(f"Refresh failed: {reason}", "error")
+        with suppress(NoMatches):  # the app may be shutting down
+            self.status.set_message(f"Refresh failed: {reason}", "error")
 
     def _refresh_pane(self) -> None:
         """Re-render whichever pane is visible; the others update when shown."""
@@ -297,6 +307,24 @@ class WinMonitorApp(App[None]):
         pane = self._standalone_pane()
         if pane is not None:
             pane.activate()
+        self._focus_view()
+
+    def _focus_view(self) -> None:
+        """Move focus into the view just shown.
+
+        A widget keeps focus when its pane is hidden, and would then swallow
+        every keystroke (the Markdown filter did exactly that). The search box
+        is the exception: it belongs to the app and stays focused while typing.
+        """
+        if self.focused is not None and self.focused.id == "search":
+            return
+        pane = self.current_pane()
+        if isinstance(pane, TablePane):
+            self.set_focus(pane.table)
+        elif isinstance(pane, StandalonePane):
+            self.set_focus(pane.default_focus())
+        else:
+            self.set_focus(None)
 
     def action_next_view(self) -> None:
         """Move to the next view, wrapping around."""
@@ -452,6 +480,9 @@ class WinMonitorApp(App[None]):
 
     def action_escape(self) -> None:
         """Close the search box, clearing the filter."""
+        pane = self._standalone_pane()
+        if pane is not None and pane.escape():
+            return
         row = self.query_one("#search-row")
         if not row.has_class("hidden"):
             row.add_class("hidden")
@@ -565,7 +596,7 @@ class WinMonitorApp(App[None]):
         pane = self._table_pane()
         if pane is None:
             self.status.set_message(
-                "Open the Processes or Ports view to terminate a process.", "warning"
+                "Open Processes, Ports or Connections to terminate a process.", "warning"
             )
             return None
         # The row under the cursor right now, never a remembered PID: after a

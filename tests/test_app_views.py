@@ -11,103 +11,13 @@ import json
 from pathlib import Path
 
 import pytest
-from textual.widgets import DataTable
 
-from winmonitor.config.settings import Settings
-from winmonitor.services import network_service, process_service
-from winmonitor.services.ai_usage import AIUsageReport, AIUsageService
-from winmonitor.services.termination_service import TerminationPlan
-from winmonitor.ui.app import WinMonitorApp
+from winmonitor.services import network_service
 from winmonitor.ui.port_details import PortDetailsScreen
 from winmonitor.ui.process_details import ProcessDetailsScreen
 from winmonitor.ui.widgets import ConfirmScreen
 
-
-class FakeController:
-    """Serves one fixed snapshot and refuses to terminate anything."""
-
-    def __init__(self, snapshot) -> None:
-        self.snapshot = snapshot
-
-    def refresh(self, enrich_pids=()):
-        return self.snapshot
-
-    def process_details(self, pid):
-        return process_service.find_by_pid(self.snapshot.processes, pid)
-
-    def find_port(self, port, protocol=None):
-        return []
-
-    def plan_termination(self, pid):
-        process = process_service.find_by_pid(self.snapshot.processes, pid)
-        if process is None:
-            return None
-        ports = network_service.ports_for_pid(self.snapshot.connections, pid)
-        return TerminationPlan(pid=pid, name=process.name, ports=ports, risk="normal", warnings=[])
-
-    def terminate(self, *args):  # pragma: no cover - must never be reached
-        raise AssertionError("tests must not terminate processes")
-
-
-class EmptyAIProvider:
-    def available(self):
-        return True
-
-    def get_detected_sources(self):
-        return ()
-
-    def get_report(self, report_type, source=None, *, by_agent=False):
-        return AIUsageReport(report_type, source, (), {}, {})
-
-
-@pytest.fixture
-def make_app(snapshot, monkeypatch, tmp_path):
-    """Build the app; ``reply`` is what every dialog answers."""
-    # Exports land in, and the Markdown view scans, an empty folder.
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("winmonitor.ui.markdown_view.user_agent_files", lambda: [])
-
-    def build(reply=None):
-        # A long interval keeps timer ticks from rebuilding tables mid-test.
-        app = WinMonitorApp(Settings(refresh_interval=60_000), controller=FakeController(snapshot))
-        app.ai_usage = AIUsageService(EmptyAIProvider())
-        app.dialogs = []
-
-        async def answer(screen):
-            app.dialogs.append(screen)
-            return reply
-
-        app.push_screen_wait = answer
-        return app
-
-    return build
-
-
-async def settle(app, pilot) -> None:
-    await pilot.pause()
-    await app.workers.wait_for_complete()
-    await pilot.pause()
-
-
-async def select_row(app, pilot, key: str) -> None:
-    """Put the cursor on ``key`` so the table reports a highlight."""
-    table: DataTable = app.current_pane().table
-    index = table.get_row_index(key)
-    # Step off and back so a highlight event fires even if it was already there.
-    table.move_cursor(row=(index + 1) % table.row_count)
-    await pilot.pause()
-    table.move_cursor(row=index)
-    await pilot.pause()
-
-
-def status(app) -> str:
-    return app.status._message
-
-
-def port_key(app, number: int, *, listening: bool = True) -> str:
-    ports = app.state.snapshot.listening_ports if listening else app.state.snapshot.all_ports
-    return next(port.key for port in ports if port.local_port == number)
-
+from .app_harness import port_key, select_row, settle, status
 
 # --------------------------------------------------------------------------- #
 # Navigation
@@ -283,7 +193,7 @@ async def test_dashboard_refuses_kill_and_asks_for_a_selection(make_app):
     async with app.run_test(size=(140, 45)) as pilot:
         await settle(app, pilot)
         await pilot.press("k")
-        assert "Processes or Ports" in status(app)
+        assert "Processes, Ports or Connections" in status(app)
         await pilot.press("d")
         await settle(app, pilot)
         assert status(app) == "Select a process first."

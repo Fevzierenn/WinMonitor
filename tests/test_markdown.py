@@ -205,7 +205,7 @@ async def test_markdown_view_refuses_process_actions(monkeypatch, project):
         await _settle(app, pilot)
         app.state.selected_pid = 1234
         app.action_kill()
-        assert "Processes or Ports" in str(app.status.render())
+        assert "Processes, Ports or Connections" in str(app.status.render())
         app.action_export_view()
         assert "read-only" in str(app.status.render())
 

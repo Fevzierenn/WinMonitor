@@ -9,6 +9,11 @@ testing view names in every action, those panes inherit
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from textual.widget import Widget
+
 __all__ = ["StandalonePane"]
 
 
@@ -35,3 +40,15 @@ class StandalonePane:
     def focus_search(self) -> bool:
         """Called for ``/``. Return ``True`` when the pane handled it."""
         return False
+
+    def escape(self) -> bool:
+        """Called for Escape. Return ``True`` when the pane handled it."""
+        return False
+
+    def default_focus(self) -> Widget | None:
+        """The widget to focus when the view is shown; ``None`` focuses nothing.
+
+        Focus must move with the view: a focused widget in a hidden pane would
+        keep receiving the user's keystrokes.
+        """
+        return None

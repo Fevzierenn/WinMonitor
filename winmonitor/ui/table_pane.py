@@ -147,9 +147,17 @@ class TablePane(Vertical):
 
         table.clear()
         self._items = {}
+        seen: dict[str, int] = {}
         for key, cells, item in rows:
-            table.add_row(*cells, key=key)
-            self._items[key] = item
+            # Keys can repeat: a listening socket and the connections it has
+            # accepted share protocol, address, port and PID. DataTable refuses
+            # duplicate keys (and the whole app would exit), so later copies
+            # get a "#n" suffix.
+            count = seen.get(key, 0)
+            seen[key] = count + 1
+            unique = key if count == 0 else f"{key}#{count}"
+            table.add_row(*cells, key=unique)
+            self._items[unique] = item
 
         if previous is not None:
             try:
