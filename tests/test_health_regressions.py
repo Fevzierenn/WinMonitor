@@ -148,3 +148,21 @@ def test_redirected_output_never_fails_on_unencodable_characters(monkeypatch):
     redirected.write("CPU ███░░ 🚀\n")
     redirected.flush()
     assert raw.getvalue().decode("utf-8") == "CPU ███░░ 🚀\n"
+
+
+@pytest.mark.asyncio
+async def test_large_markdown_renders_with_no_color_set(monkeypatch, make_app, tmp_path):
+    # NO_COLOR turns on Textual's monochrome filter, which crashed on
+    # unstyled segments in the fast view.
+    monkeypatch.setenv("NO_COLOR", "1")
+    big = "\n\n".join(f"## Section {n}\n\n" + "plain text " * 40 for n in range(300))
+    (tmp_path / "big.md").write_text(big, encoding="utf-8")
+    app = make_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(app, pilot)
+        await pilot.press("m")
+        await settle(app, pilot)
+        app.query_one("#markdown", MarkdownPane).open_document((tmp_path / "big.md").resolve())
+        await settle(app, pilot)
+        assert app.query_one("#md-fast", RenderedLines).line_count > 300
+        assert app.is_running

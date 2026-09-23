@@ -28,6 +28,8 @@ from typing import Any
 
 from rich.console import Console
 from rich.markdown import Markdown as RichMarkdown
+from rich.segment import Segment
+from rich.style import Style
 from rich.text import Text
 from textual import events, work
 from textual.app import ComposeResult
@@ -68,7 +70,12 @@ def prerender_markdown(text: str, width: int) -> list[Strip]:
         file=io.StringIO(),
     )
     lines = console.render_lines(RichMarkdown(text), console.options, pad=False)
-    return [Strip(line) for line in lines]
+    # Every segment gets a real Style: with NO_COLOR set, Textual's monochrome
+    # filter reads ``style.color`` and would crash on an unstyled segment.
+    null = Style.null()
+    return [
+        Strip([Segment(seg.text, seg.style or null, seg.control) for seg in line]) for line in lines
+    ]
 
 
 class RenderedLines(ScrollView, can_focus=True):
