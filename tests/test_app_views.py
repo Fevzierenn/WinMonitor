@@ -344,3 +344,105 @@ def test_connection_rows_resolve_to_their_own_local_port(state):
             assert port.pid == connection.pid
     orphan = next(c for c in state.snapshot.connections if c.pid is None)
     assert _local_port(orphan, state).local_port == orphan.local_port
+
+
+# --------------------------------------------------------------------------- #
+# Regressions found in review
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_tab_never_changes_the_view_behind_a_dialog(make_app):
+    from winmonitor.ui.views import key_help
+    from winmonitor.ui.widgets import HelpScreen, TypedConfirmScreen
+
+    app = make_app()
+    async with app.run_test(size=(140, 45)) as pilot:
+        await settle(app, pilot)
+        await pilot.press("p")
+        await settle(app, pilot)
+        plan = app.controller.plan_termination(18420)
+        for screen in (HelpScreen(key_help()), TypedConfirmScreen(plan, force=True)):
+            app.push_screen(screen)
+            await pilot.pause()
+            for _ in range(3):
+                await pilot.press("tab")
+                await pilot.press("shift+tab")
+                await pilot.press("tab")
+            assert app.state.view == "processes"
+            app.pop_screen()
+            await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_tab_with_a_dropdown_open_stays_in_the_view(make_app):
+    app = make_app()
+    async with app.run_test(size=(140, 45)) as pilot:
+        await settle(app, pilot)
+        await pilot.press("a")
+        await settle(app, pilot)
+        app.query_one("#ai-source").focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.state.view == "ai_usage"
+
+
+@pytest.mark.asyncio
+async def test_port_details_keep_the_highlighted_owner(snapshot, make_app):
+    from tests.conftest import make_connection
+
+    # Two owners on port 8080: the IPv4 socket belongs to java, the IPv6 one to node.
+    snapshot.connections[1] = make_connection(
+        local_address="::", local_port=8080, pid=18420, process_name="node.exe", family="IPv6"
+    )
+    app = make_app()
+    # The real controller returns every socket on the port, other owner first.
+    app.controller.find_port = lambda port, protocol=None: network_service.find_port(
+        snapshot.connections, port, protocol
+    )
+    async with app.run_test(size=(140, 45)) as pilot:
+        await settle(app, pilot)
+        await pilot.press("o")
+        await settle(app, pilot)
+        row = next(
+            port.key
+            for port in app.state.snapshot.listening_ports
+            if port.local_port == 8080 and port.pid == 18420
+        )
+        await select_row(app, pilot, row)
+        await pilot.press("d")
+        await settle(app, pilot)
+        dialog = app.dialogs[-1]
+        assert isinstance(dialog, PortDetailsScreen)
+        assert (dialog._port.pid, dialog._port.local_address) == (18420, "::")
+
+
+@pytest.mark.parametrize(
+    ("key", "details_hint"), [("o", "Select a port first."), ("p", "Select a process first.")]
+)
+@pytest.mark.asyncio
+async def test_empty_filtered_table_never_acts_on_an_old_selection(make_app, key, details_hint):
+    app = make_app()
+    async with app.run_test(size=(140, 45)) as pilot:
+        await settle(app, pilot)
+        await pilot.press(key)
+        await settle(app, pilot)
+        table = app.current_pane().table
+        table.move_cursor(row=1)
+        await pilot.pause()
+        assert app.state.selected_pid is not None
+        await pilot.press("slash")
+        await pilot.press(*"zzzz")
+        await pilot.press("enter")
+        await settle(app, pilot)
+        assert table.row_count == 0
+        await pilot.press("k")
+        await settle(app, pilot)
+        assert status(app) == "Select a row first."
+        await pilot.press("d")
+        await settle(app, pilot)
+        assert status(app) == details_hint
+        assert app.dialogs == []

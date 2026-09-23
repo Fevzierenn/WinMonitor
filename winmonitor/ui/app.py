@@ -315,8 +315,20 @@ class WinMonitorApp(App[None]):
         self.action_view(VIEW_IDS[(index - 1) % len(VIEW_IDS)])
 
     def _typing_in_field(self) -> bool:
-        """In a form field, Tab keeps its usual job of moving between fields."""
-        return isinstance(self.focused, (Input, Select, Button))
+        """Whether Tab should keep its usual job of moving focus.
+
+        True inside a dialog (the view behind it must not change, least of all
+        under a kill confirmation) and in a form field, including an open
+        Select dropdown, whose focused overlay is a child of the Select.
+        """
+        if self.screen is not self.screen_stack[0]:
+            return True
+        focused = self.focused
+        if focused is None:
+            return False
+        return any(
+            isinstance(node, (Input, Select, Button)) for node in (focused, *focused.ancestors)
+        )
 
     def action_refresh_now(self) -> None:
         """Collect immediately instead of waiting for the next tick."""
@@ -455,10 +467,20 @@ class WinMonitorApp(App[None]):
         if self._standalone_pane() is not None:
             return
         pane = self._table_pane()
-        if pane is None or pane.SELECTS == "process":
+        if pane is None:
+            # The dashboard shows the process last selected in another view.
             self._show_process_details()
             return
+        # Read the row under the cursor now: a filter may have emptied the
+        # table since the last highlight, leaving a stale PID in the state.
         selection = pane.selection(self.state)
+        if pane.SELECTS == "process":
+            if selection is None:
+                self.status.set_message("Select a process first.", "warning")
+                return
+            self.state.selected_pid = selection.pid
+            self._show_process_details()
+            return
         if selection is None or selection.port_info is None:
             self.status.set_message("Select a port first.", "warning")
             return
@@ -488,8 +510,17 @@ class WinMonitorApp(App[None]):
             enriched = await asyncio.to_thread(
                 self.controller.find_port, port.local_port, port.protocol
             )
-            if enriched:
-                port = enriched[0]
+            # Several sockets can share a port number (IPv4 and IPv6, or two
+            # owners); only enrich from the one this row is, or the dialog's
+            # kill button would act on another process.
+            port = next(
+                (
+                    candidate
+                    for candidate in enriched
+                    if candidate.pid == port.pid and candidate.local_address == port.local_address
+                ),
+                port,
+            )
         self._dialog_open = True
         try:
             choice = await self.push_screen_wait(
@@ -531,15 +562,20 @@ class WinMonitorApp(App[None]):
 
     def _termination_target(self) -> int | None:
         """The PID the kill keys act on, or ``None`` with an explanation."""
-        if self._table_pane() is None:
+        pane = self._table_pane()
+        if pane is None:
             self.status.set_message(
                 "Open the Processes or Ports view to terminate a process.", "warning"
             )
             return None
-        if self.state.selected_pid is None:
+        # The row under the cursor right now, never a remembered PID: after a
+        # search empties the table the state can still hold an old selection.
+        selection = pane.selection(self.state)
+        if selection is None or selection.pid is None:
             self.status.set_message("Select a row first.", "warning")
             return None
-        return self.state.selected_pid
+        self.state.selected_pid = selection.pid
+        return selection.pid
 
     @work
     async def _termination_flow(self, pid: int, force: bool, port: int | None = None) -> None:
