@@ -4,6 +4,12 @@ The pane owns its whole load cycle (filters, debounce, worker thread, stale
 result handling) so the app only has to call :meth:`AIUsagePane.activate` and
 :meth:`AIUsagePane.refresh_now`; see :mod:`winmonitor.ui.pane`.  Turning a
 report into cells and text is done by :mod:`winmonitor.ui.ai_usage_render`.
+
+A ccusage run can take a minute, so two things keep the wait short.  When the
+service has a disk-cached copy of the requested report, it is shown at once
+and replaced when the fresh run finishes (stale-while-revalidate).  And every
+load carries a :class:`CancelToken`: a newer request, or closing the app,
+kills the superseded ccusage process tree instead of letting it run on.
 """
 
 from __future__ import annotations
@@ -24,8 +30,11 @@ from ..services.ai_usage import (
     AIUsageError,
     AIUsageReport,
     AIUsageService,
+    CachedReport,
+    CancelToken,
     source_name,
 )
+from ..utils.formatting import format_human_duration
 from .ai_usage_render import (
     display_date,
     render_report,
@@ -44,6 +53,20 @@ __all__ = [
     "report_cell",
     "report_columns",
 ]
+
+UNAVAILABLE_MESSAGE = (
+    "AI Usage unavailable. Install ccusage, Bun, Node.js/npx, or pnpm, then press Refresh."
+)
+
+
+def cache_age(saved_at: float, now: float | None = None) -> str:
+    """How long ago a cached report was produced, e.g. ``12 min ago``."""
+    seconds = max(0.0, (time.time() if now is None else now) - saved_at)
+    if seconds < 60:
+        return "less than a minute ago"
+    if seconds < 3600:
+        return f"{int(seconds // 60)} min ago"
+    return f"{format_human_duration(seconds)} ago"
 
 
 class AIUsagePane(StandalonePane, Vertical):
@@ -64,6 +87,12 @@ class AIUsagePane(StandalonePane, Vertical):
         self._activated = False
         self._wait_timer: Timer | None = None
         self._wait_started = 0.0
+        # True from a request until its result or error arrives, including
+        # while a cached copy is on screen.
+        self._in_flight = False
+        self._cancel: CancelToken | None = None
+        # The disk-cached copy shown for the current request, if any.
+        self._stale: CachedReport | None = None
 
     def compose(self) -> ComposeResult:
         yield Static("AI USAGE", classes="panel-title")
@@ -143,63 +172,112 @@ class AIUsagePane(StandalonePane, Vertical):
 
         A second request for the filters already loading is ignored, so
         switching back to the view does not start a duplicate ccusage process.
+        Any other request supersedes the running one, whose ccusage process
+        is cancelled because its result would be thrown away.
         """
-        if (
-            not refresh
-            and self.has_class("loading")
-            and self._filters == (self.source, self.report_type)
-        ):
+        if not refresh and self._in_flight and self._filters == (self.source, self.report_type):
             return
         if self._load_timer is not None:
             self._load_timer.stop()
             self._load_timer = None
+        self.cancel_load()
         self._request += 1
         self._filters = (self.source, self.report_type)
-        self.begin_loading()
+        self._in_flight = True
+        token = self._cancel = CancelToken()
         request, source, report_type = self._request, self.source, self.report_type
+        self._stale = self._cached_copy(source, report_type, refresh)
+        if self._stale is None:
+            self.begin_loading()
+        else:
+            self.show_cached(self._stale)
         if debounce:
             # Stepping through a Select fires several changes; only the one
             # the user settles on should cost a ccusage run.
             self._load_timer = self.set_timer(
-                0.2, lambda: self._load(request, source, report_type, refresh)
+                0.2, lambda: self._load(request, source, report_type, refresh, token)
             )
         else:
-            self._load(request, source, report_type, refresh)
+            self._load(request, source, report_type, refresh, token)
+
+    def cancel_load(self) -> None:
+        """Stop the ccusage run of the current request, if one is running."""
+        if self._cancel is not None:
+            self._cancel.cancel()
+            self._cancel = None
+
+    def on_unmount(self) -> None:
+        # Closing the app must not leave a minute-long node process behind.
+        if self._load_timer is not None:
+            self._load_timer.stop()
+        self.cancel_load()
+
+    def _cached_copy(
+        self, source: str | None, report_type: str, refresh: bool
+    ) -> CachedReport | None:
+        try:
+            return self.service.cached_report(report_type, source, refresh=refresh)
+        except Exception:
+            # The cache only saves time; a bug in it must not block the load.
+            logger.exception("Reading the AI Usage cache failed")
+            return None
 
     @work(thread=True, group="ai-usage")
-    def _load(self, request: int, source: str | None, report_type: str, refresh: bool) -> None:
+    def _load(
+        self,
+        request: int,
+        source: str | None,
+        report_type: str,
+        refresh: bool,
+        token: CancelToken,
+    ) -> None:
         try:
-            report, sources = self.service.load_report(report_type, source, refresh=refresh)
+            report, sources = self.service.load_report(
+                report_type, source, refresh=refresh, cancel=token
+            )
         except AIUsageError as exc:
-            self.app.call_from_thread(self._on_error, request, exc)
+            if not token.cancelled:
+                self.app.call_from_thread(self._on_error, request, exc)
             return
         except Exception as exc:
+            if token.cancelled:
+                return
             # A provider bug must cost one report, not the whole application.
             logger.exception("AI Usage provider failed")
             error = AIUsageError("runtime", f"AI Usage failed unexpectedly: {exc}")
             self.app.call_from_thread(self._on_error, request, error)
             return
-        self.app.call_from_thread(self._on_report, request, sources, report)
+        if not token.cancelled:
+            self.app.call_from_thread(self._on_report, request, sources, report)
 
     def _on_report(
         self, request: int, sources: tuple[str, ...] | None, report: AIUsageReport
     ) -> None:
         if request != self._request:
             return
+        self._in_flight = False
+        self._cancel = None
+        self._stale = None
         if sources is not None:
             self.set_sources(sources)
         self.show_report(report)
 
     def _on_error(self, request: int, error: AIUsageError) -> None:
-        if request != self._request:
+        if request != self._request or error.kind == "cancelled":
             return
-        if error.kind == "unavailable":
-            self.show_error(
-                "AI Usage unavailable. Install ccusage, Bun, Node.js/npx, or pnpm, "
-                "then press Refresh."
-            )
+        self._in_flight = False
+        self._cancel = None
+        message = UNAVAILABLE_MESSAGE if error.kind == "unavailable" else str(error)
+        stale, self._stale = self._stale, None
+        if stale is None:
+            self.show_error(message)
         else:
-            self.show_error(str(error))
+            # The cached rows are still the best answer available; keep them.
+            self.set_message(
+                f"Refresh failed: {message.rstrip('.')}. "
+                f"Showing results from {cache_age(stale.saved_at)}.",
+                error=True,
+            )
 
     # -- rendering ----------------------------------------------------------- #
 
@@ -265,12 +343,21 @@ class AIUsagePane(StandalonePane, Vertical):
         self.set_message(message, error=True)
         self._finish_loading(has_rows=False)
 
-    def show_report(self, report: AIUsageReport) -> None:
+    def show_cached(self, cached: CachedReport) -> None:
+        """Show a disk-cached report, usable at once, while the fresh one loads."""
+        if cached.sources is not None:
+            self.set_sources(cached.sources)
+        self.show_report(
+            cached.report,
+            message=f"Showing results from {cache_age(cached.saved_at)}; refreshing...",
+        )
+
+    def show_report(self, report: AIUsageReport, *, message: str | None = None) -> None:
         rendered = render_report(report)
         table = self.query_one("#ai-table", DataTable)
         table.clear(columns=True)
         sources = self.query_one("#ai-sources", Static)
-        self.set_message(rendered.message)
+        self.set_message(rendered.message if message is None else message)
         self.query_one("#ai-totals", Static).update(rendered.totals)
         if rendered.sources is not None:
             sources.update(rendered.sources)

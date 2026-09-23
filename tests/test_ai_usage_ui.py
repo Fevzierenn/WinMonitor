@@ -15,9 +15,12 @@ from winmonitor.services.ai_usage import (
     AIUsageService,
     CCUsageAdapter,
 )
+from winmonitor.services.usage_cache import UsageCache
+from winmonitor.ui.ai_usage import cache_age
 from winmonitor.ui.app import WinMonitorApp
 
-from .ai_fakes import RecordingProvider, by_agent_row
+from .ai_fakes import JsonProvider, RecordingProvider, by_agent_row, ccusage_stdout
+from .conftest import NOW
 
 
 @pytest.mark.asyncio
@@ -223,9 +226,146 @@ def test_timeout_is_configurable_and_explained(monkeypatch):
         lambda name: "ccusage" if name == "ccusage" else None,
     )
 
-    def time_out(*args, **kwargs):
-        raise subprocess.TimeoutExpired(["ccusage"], 42)
+    def time_out(command, timeout, cancel=None):
+        raise subprocess.TimeoutExpired(command, timeout)
 
-    monkeypatch.setattr("winmonitor.providers.runner.subprocess.run", time_out)
+    monkeypatch.setattr("winmonitor.providers.ccusage.run_command", time_out)
     with pytest.raises(AIUsageError, match="ai_usage_timeout"):
         CCUsageAdapter(timeout=42).get_report("daily")
+
+
+# -- disk cache and cancellation --------------------------------------------- #
+
+CACHED_ROWS = [{"period": "2026-09-01", "agent": "claude", "totalTokens": 1}]
+FRESH_ROWS = [
+    {"period": "2026-09-20", "agent": "claude", "totalTokens": 5},
+    {"period": "2026-09-21", "agent": "claude", "totalTokens": 6},
+]
+
+
+def cached_app(monkeypatch, tmp_path, provider):
+    """An app whose disk cache holds a 12-minute-old daily report."""
+    cache = UsageCache(tmp_path / "cache")
+    cache.save((None, "daily", True), ccusage_stdout("daily", CACHED_ROWS), now=NOW - 720)
+    monkeypatch.setattr(WinMonitorApp, "_collect", lambda self: None)
+    app = WinMonitorApp(Settings())
+    app.ai_usage = AIUsageService(provider, disk_cache=cache)
+    return app
+
+
+def message(app) -> str:
+    return str(app.query_one("#ai-message", Static).render())
+
+
+@pytest.mark.asyncio
+async def test_cached_report_shows_at_once_then_fresh_replaces_it(monkeypatch, tmp_path):
+    gate = threading.Event()
+    provider = JsonProvider({(None, "daily"): FRESH_ROWS}, gate=gate)
+    app = cached_app(monkeypatch, tmp_path, provider)
+    try:
+        async with app.run_test(size=(120, 40)) as pilot:
+            app.action_view("ai_usage")
+            await pilot.pause()
+            pane = app.query_one("#ai_usage")
+            table = app.query_one("#ai-table", DataTable)
+            # The cached rows are usable while ccusage is still running.
+            assert provider.calls == [(None, "daily", True)]
+            assert table.row_count == 1
+            assert not table.disabled and not table.has_class("hidden")
+            assert app.query_one("#ai-wait", Static).has_class("hidden")
+            assert not pane.has_class("loading")
+            assert "Showing results from 12 min ago; refreshing" in message(app)
+            # Coming back to the view does not start a second run.
+            app.action_view("ai_usage")
+            assert len(provider.calls) == 1
+            gate.set()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert table.row_count == 2
+            assert message(app) == "2 daily row(s) from ccusage"
+    finally:
+        gate.set()
+
+
+@pytest.mark.asyncio
+async def test_failed_refresh_keeps_the_cached_rows(monkeypatch, tmp_path):
+    error = AIUsageError("exit", "ccusage failed (exit 1). Check its installation.")
+    app = cached_app(monkeypatch, tmp_path, JsonProvider(error=error))
+    async with app.run_test(size=(120, 40)) as pilot:
+        app.action_view("ai_usage")
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        table = app.query_one("#ai-table", DataTable)
+        assert table.row_count == 1
+        assert not table.disabled and not table.has_class("hidden")
+        assert message(app) == (
+            "Refresh failed: ccusage failed (exit 1). Check its installation. "
+            "Showing results from 12 min ago."
+        )
+
+
+@pytest.mark.asyncio
+async def test_without_a_cached_copy_the_wait_panel_is_shown(monkeypatch, tmp_path):
+    gate = threading.Event()
+    provider = JsonProvider({(None, "weekly"): FRESH_ROWS}, gate=gate)
+    app = cached_app(monkeypatch, tmp_path, provider)
+    try:
+        async with app.run_test(size=(120, 40)) as pilot:
+            app.query_one("#ai-report", Select).value = "weekly"
+            await pilot.pause()
+            app.action_view("ai_usage")
+            await pilot.pause()
+            assert app.query_one("#ai_usage").has_class("loading")
+            assert not app.query_one("#ai-wait", Static).has_class("hidden")
+            assert app.query_one("#ai-table", DataTable).has_class("hidden")
+    finally:
+        gate.set()
+
+
+@pytest.mark.asyncio
+async def test_a_superseded_run_is_cancelled_and_never_shown(monkeypatch):
+    rows = {(None, "daily"): CACHED_ROWS, (None, "weekly"): FRESH_ROWS}
+    provider = JsonProvider(rows, until_cancelled={(None, "daily")})
+    monkeypatch.setattr(WinMonitorApp, "_collect", lambda self: None)
+    app = WinMonitorApp(Settings())
+    app.ai_usage = AIUsageService(provider)
+    async with app.run_test(size=(120, 40)) as pilot:
+        app.action_view("ai_usage")
+        await pilot.pause()
+        daily_token = provider.tokens[0]
+        assert not daily_token.cancelled
+        app.query_one("#ai-report", Select).value = "weekly"
+        await pilot.pause(0.4)
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert daily_token.cancelled
+        assert provider.calls == [(None, "daily", True), (None, "weekly", True)]
+        assert not provider.tokens[1].cancelled
+        assert app.query_one("#ai-table", DataTable).row_count == 2
+        assert message(app) == "2 weekly row(s) from ccusage"
+
+
+@pytest.mark.asyncio
+async def test_closing_the_app_cancels_the_running_report(monkeypatch):
+    provider = JsonProvider(until_cancelled={(None, "daily")})
+    monkeypatch.setattr(WinMonitorApp, "_collect", lambda self: None)
+    app = WinMonitorApp(Settings())
+    app.ai_usage = AIUsageService(provider)
+    async with app.run_test(size=(120, 40)) as pilot:
+        app.action_view("ai_usage")
+        await pilot.pause()
+        assert provider.tokens and not provider.tokens[0].cancelled
+    assert provider.tokens[0].cancelled
+
+
+def test_app_uses_the_disk_cache_only_when_enabled(isolated_ai_usage_cache):
+    enabled = WinMonitorApp(Settings()).ai_usage.disk_cache
+    assert enabled is not None and enabled.directory == isolated_ai_usage_cache
+    assert WinMonitorApp(Settings(ai_usage_disk_cache=False)).ai_usage.disk_cache is None
+
+
+def test_cache_age_reads_naturally():
+    assert cache_age(NOW - 10, NOW) == "less than a minute ago"
+    assert cache_age(NOW - 720, NOW) == "12 min ago"
+    assert cache_age(NOW - 7200, NOW) == "2 hours ago"
+    assert cache_age(NOW + 60, NOW) == "less than a minute ago"

@@ -1,13 +1,20 @@
-"""The AI usage service: report caching, source discovery and the --by-agent fallback."""
+"""The AI usage service: caching, source discovery, --by-agent fallback, cancellation."""
 
 from __future__ import annotations
 
+import pytest
+
+from winmonitor.providers.runner import current_cancel_token
 from winmonitor.services.ai_usage import (
+    AIUsageError,
     AIUsageReport,
     AIUsageService,
+    CancelToken,
 )
+from winmonitor.services.usage_cache import UsageCache
 
-from .ai_fakes import RecordingProvider
+from .ai_fakes import JsonProvider, RecordingProvider, by_agent_row
+from .conftest import NOW
 
 
 def test_first_unified_load_discovers_sources_without_a_second_query():
@@ -109,3 +116,82 @@ def test_source_cache_honours_the_configured_ttl():
     service.get_detected_sources()
     service.get_detected_sources()
     assert provider.discoveries == 2
+
+
+# -- the disk cache (stale-while-revalidate) --------------------------------- #
+
+DAILY = {(None, "daily"): [by_agent_row("2026-09-20", ("claude", 900, 9.0, "opus"))]}
+
+
+def test_disk_cache_survives_a_restart(tmp_path):
+    first = AIUsageService(JsonProvider(DAILY), disk_cache=UsageCache(tmp_path))
+    report, _ = first.load_report("daily")
+    # A new service is a new app start: memory is empty, the disk is not.
+    provider = JsonProvider()
+    restarted = AIUsageService(provider, disk_cache=UsageCache(tmp_path))
+    cached = restarted.cached_report("daily")
+    assert cached is not None
+    assert cached.report == report
+    assert cached.sources == ("claude",)
+    assert cached.saved_at == NOW
+    assert provider.calls == []
+
+
+def test_cached_copy_is_skipped_while_memory_is_fresh(tmp_path):
+    service = AIUsageService(JsonProvider(DAILY), disk_cache=UsageCache(tmp_path))
+    service.load_report("daily")
+    # The load would be answered from memory at once, so there is nothing to bridge.
+    assert service.cached_report("daily") is None
+    assert service.cached_report("daily", refresh=True) is not None
+
+
+def test_no_disk_cache_means_no_cached_copy(tmp_path):
+    service = AIUsageService(JsonProvider(DAILY))
+    service.load_report("daily")
+    assert service.cached_report("daily", refresh=True) is None
+    assert not any(tmp_path.iterdir())
+
+
+def test_plain_providers_do_not_feed_the_disk_cache(tmp_path):
+    service = AIUsageService(RecordingProvider(), disk_cache=UsageCache(tmp_path))
+    service.load_report("daily")
+    assert service.cached_report("daily", refresh=True) is None
+
+
+def test_cached_output_is_parsed_like_fresh_output(tmp_path):
+    cache = UsageCache(tmp_path)
+    cache.save((None, "daily", True), "this is not json")
+    cache.save((None, "daily", False), '{"daily": [{"period": "2026-09-19"}], "totals": {}}')
+    service = AIUsageService(JsonProvider(), disk_cache=cache)
+    # The broken per-agent entry is skipped in favour of the plain one.
+    cached = service.cached_report("daily")
+    assert cached is not None
+    assert cached.report.rows == ({"period": "2026-09-19"},)
+    assert service.cached_report("weekly") is None
+
+
+def test_single_source_cached_copy_leaves_the_selector_alone(tmp_path):
+    rows = {("claude", "daily"): [{"period": "2026-09-20", "agent": "claude"}]}
+    AIUsageService(JsonProvider(rows), disk_cache=UsageCache(tmp_path)).load_report(
+        "daily", "claude"
+    )
+    service = AIUsageService(JsonProvider(), disk_cache=UsageCache(tmp_path))
+    cached = service.cached_report("daily", "claude")
+    assert cached is not None and cached.sources is None
+
+
+def test_load_installs_the_cancel_token_for_the_provider():
+    provider = JsonProvider(DAILY)
+    token = CancelToken()
+    AIUsageService(provider).load_report("daily", cancel=token)
+    assert provider.tokens == [token]
+    assert current_cancel_token() is None
+
+
+def test_cancelled_load_raises_cancelled():
+    provider = JsonProvider({("claude", "daily"): []})
+    token = CancelToken()
+    token.cancel()
+    with pytest.raises(AIUsageError) as raised:
+        AIUsageService(provider).load_report("daily", "claude", cancel=token)
+    assert raised.value.kind == "cancelled"

@@ -37,6 +37,14 @@ def frozen_clock(monkeypatch: pytest.MonkeyPatch) -> float:
     return NOW
 
 
+@pytest.fixture(autouse=True)
+def isolated_ai_usage_cache(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    """Keep every test away from the user's real AI Usage disk cache."""
+    directory = tmp_path / "ai-usage-cache"
+    monkeypatch.setattr("winmonitor.services.usage_cache.default_cache_dir", lambda: directory)
+    return directory
+
+
 def make_process(
     pid: int = 1000,
     name: str = "java.exe",

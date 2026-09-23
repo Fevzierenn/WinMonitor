@@ -1,19 +1,42 @@
 """The ccusage provider: launcher detection, command building, running and parsing.
 
-Only synthetic JSON and mocked launchers are used; ccusage itself never runs."""
+Only synthetic JSON and mocked launchers are used; ccusage itself never runs.
+The runner tests start small Python processes of their own and kill only those.
+"""
 
 from __future__ import annotations
 
 import json
 import subprocess
+import sys
+import threading
+import time
+from pathlib import Path
 
+import psutil
 import pytest
 
+from winmonitor.providers.runner import (
+    CancelToken,
+    CommandCancelled,
+    RunResult,
+    cancellation,
+    run_command,
+)
 from winmonitor.services.ai_usage import (
     AIUsageError,
     CCUsageAdapter,
     source_name,
 )
+
+
+def fake_run(monkeypatch, outcome):
+    """Replace the runner behind the adapter with a result or a callable."""
+
+    def run(command, timeout, cancel=None):
+        return outcome(list(command)) if callable(outcome) else outcome
+
+    monkeypatch.setattr("winmonitor.providers.ccusage.run_command", run)
 
 
 @pytest.mark.parametrize(
@@ -90,10 +113,7 @@ def test_json_report_and_unknown_fields(monkeypatch):
         ],
         "totals": {"totalCost": 0.123456},
     }
-    monkeypatch.setattr(
-        "winmonitor.providers.runner.subprocess.run",
-        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, json.dumps(payload), ""),
-    )
+    fake_run(monkeypatch, RunResult(0, json.dumps(payload), ""))
     report = CCUsageAdapter().get_report("daily")
     assert report.rows[0]["extra"] == {"new": True}
     assert report.totals["totalCost"] == 0.123456
@@ -102,9 +122,9 @@ def test_json_report_and_unknown_fields(monkeypatch):
 @pytest.mark.parametrize(
     ("outcome", "kind"),
     [
-        (subprocess.CompletedProcess(["ccusage"], 1, "", "bad"), "exit"),
-        (subprocess.CompletedProcess(["ccusage"], 0, "not json", ""), "json"),
-        (subprocess.CompletedProcess(["ccusage"], 0, "{}", ""), "json"),
+        (RunResult(1, "", "bad"), "exit"),
+        (RunResult(0, "not json", ""), "json"),
+        (RunResult(0, "{}", ""), "json"),
     ],
 )
 def test_execution_errors(monkeypatch, outcome, kind):
@@ -112,9 +132,7 @@ def test_execution_errors(monkeypatch, outcome, kind):
         "winmonitor.providers.ccusage.shutil.which",
         lambda name: "ccusage" if name == "ccusage" else None,
     )
-    monkeypatch.setattr(
-        "winmonitor.providers.runner.subprocess.run", lambda *args, **kwargs: outcome
-    )
+    fake_run(monkeypatch, outcome)
     with pytest.raises(AIUsageError) as raised:
         CCUsageAdapter().get_report("daily")
     assert raised.value.kind == kind
@@ -126,13 +144,14 @@ def test_timeout_and_missing_launcher(monkeypatch):
         lambda name: "ccusage" if name == "ccusage" else None,
     )
 
-    def time_out(*args, **kwargs):
-        raise subprocess.TimeoutExpired(["ccusage"], 30)
+    def time_out(command):
+        raise subprocess.TimeoutExpired(command, 30)
 
-    monkeypatch.setattr("winmonitor.providers.runner.subprocess.run", time_out)
+    fake_run(monkeypatch, time_out)
     with pytest.raises(AIUsageError) as raised:
         CCUsageAdapter().get_report("daily")
     assert raised.value.kind == "timeout"
+    assert "ai_usage_timeout" in str(raised.value)
     monkeypatch.setattr("winmonitor.providers.ccusage.shutil.which", lambda name: None)
     with pytest.raises(AIUsageError) as raised:
         CCUsageAdapter().get_report("daily")
@@ -144,12 +163,7 @@ def test_empty_data_is_not_an_error(monkeypatch):
         "winmonitor.providers.ccusage.shutil.which",
         lambda name: "ccusage" if name == "ccusage" else None,
     )
-    monkeypatch.setattr(
-        "winmonitor.providers.runner.subprocess.run",
-        lambda *args, **kwargs: subprocess.CompletedProcess(
-            args[0], 0, '{"daily":[],"totals":{}}', ""
-        ),
-    )
+    fake_run(monkeypatch, RunResult(0, '{"daily":[],"totals":{}}', ""))
     assert CCUsageAdapter().get_report("daily").rows == ()
 
 
@@ -170,11 +184,11 @@ def test_source_discovery_includes_unknown_agent(monkeypatch):
     }
     commands = []
 
-    def run(command, **kwargs):
+    def run(command):
         commands.append(command)
-        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+        return RunResult(0, json.dumps(payload), "")
 
-    monkeypatch.setattr("winmonitor.providers.runner.subprocess.run", run)
+    fake_run(monkeypatch, run)
     assert CCUsageAdapter().get_detected_sources() == ("claude", "codex", "future-agent")
     assert commands[0][-1] == "--by-agent"
     assert source_name("future-agent") == "Future Agent"
@@ -186,18 +200,142 @@ def test_older_session_json_and_discovery_fallback(monkeypatch):
         lambda name: "ccusage" if name == "ccusage" else None,
     )
 
-    def run(command, **kwargs):
+    def run(command):
         if "--by-agent" in command:
-            return subprocess.CompletedProcess(command, 2, "", "unknown option")
-        return subprocess.CompletedProcess(
-            command,
-            0,
-            json.dumps({"sessions": [{"sessionId": "abc", "agent": "future-agent"}]}),
-            "",
+            return RunResult(2, "", "unknown option")
+        return RunResult(
+            0, json.dumps({"sessions": [{"sessionId": "abc", "agent": "future-agent"}]}), ""
         )
 
-    monkeypatch.setattr("winmonitor.providers.runner.subprocess.run", run)
+    fake_run(monkeypatch, run)
     adapter = CCUsageAdapter()
     assert adapter.get_detected_sources() == ("future-agent",)
     report = adapter.get_report("session")
     assert report.rows[0]["sessionId"] == "abc"
+
+
+def test_report_output_returns_the_exact_stdout(monkeypatch):
+    monkeypatch.setattr(
+        "winmonitor.providers.ccusage.shutil.which",
+        lambda name: "ccusage" if name == "ccusage" else None,
+    )
+    stdout = '{"daily": [{"period": "2026-09-20", "totalTokens": 7}], "totals": {}}\n'
+    fake_run(monkeypatch, RunResult(0, stdout, ""))
+    report, raw = CCUsageAdapter().get_report_output("daily")
+    assert raw == stdout
+    assert report.rows[0]["totalTokens"] == 7
+
+
+def test_cancelled_run_is_reported_as_cancelled(monkeypatch):
+    monkeypatch.setattr(
+        "winmonitor.providers.ccusage.shutil.which",
+        lambda name: "ccusage" if name == "ccusage" else None,
+    )
+
+    def cancelled(command):
+        raise CommandCancelled("stopped")
+
+    fake_run(monkeypatch, cancelled)
+    with pytest.raises(AIUsageError) as raised:
+        CCUsageAdapter().get_report("daily")
+    assert raised.value.kind == "cancelled"
+
+
+# -- the runner, with real (harmless) processes ------------------------------ #
+
+#: A parent that starts a sleeping child, records both PIDs, then sleeps too.
+#: Through the venv launcher on Windows the real tree is even deeper.
+_TREE_SCRIPT = """
+import os, subprocess, sys, time
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+with open(sys.argv[1] + ".tmp", "w") as handle:
+    handle.write(f"{os.getpid()} {child.pid}")
+os.replace(sys.argv[1] + ".tmp", sys.argv[1])
+time.sleep(60)
+"""
+
+
+def _tree_pids(path: Path) -> list[psutil.Process]:
+    deadline = time.monotonic() + 20
+    while not path.exists():
+        assert time.monotonic() < deadline, "the test process tree never started"
+        time.sleep(0.05)
+    return [psutil.Process(int(pid)) for pid in path.read_text().split()]
+
+
+def _assert_gone(processes: list[psutil.Process]) -> None:
+    _, alive = psutil.wait_procs(processes, timeout=10)
+    # Never leave anything behind, even when the assertion below fails.
+    for process in alive:
+        process.kill()
+    assert not alive, f"still running: {[p.pid for p in alive]}"
+
+
+def test_runner_captures_utf8_and_replaces_undecodable_bytes():
+    script = "import sys; sys.stdout.buffer.write('ok \\u00fc '.encode() + b'\\xff')"
+    result = run_command([sys.executable, "-c", script], timeout=30)
+    assert result.returncode == 0
+    assert result.stdout == "ok ü �"
+
+
+def test_runner_gives_the_child_no_stdin():
+    script = "import sys; print(repr(sys.stdin.read()))"
+    result = run_command([sys.executable, "-c", script], timeout=30)
+    assert result.stdout.strip() == "''"
+
+
+def _start_tree(marker: Path, timeout: float, token: CancelToken | None = None):
+    """Run the tree script in a thread; return the thread and its outcome list."""
+    outcome: list[BaseException | RunResult] = []
+
+    def run():
+        try:
+            outcome.append(
+                run_command([sys.executable, "-c", _TREE_SCRIPT, str(marker)], timeout, token)
+            )
+        except BaseException as exc:
+            outcome.append(exc)
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    return worker, outcome
+
+
+def test_cancel_kills_the_whole_process_tree(tmp_path):
+    marker = tmp_path / "pids"
+    token = CancelToken()
+    worker, outcome = _start_tree(marker, 60, token)
+    processes = _tree_pids(marker)
+    started = time.monotonic()
+    token.cancel()
+    worker.join(20)
+    assert not worker.is_alive()
+    assert isinstance(outcome[0], CommandCancelled)
+    # Far sooner than the 60 s the processes would otherwise sleep.
+    assert time.monotonic() - started < 15
+    _assert_gone(processes)
+
+
+def test_timeout_kills_the_whole_process_tree(tmp_path):
+    marker = tmp_path / "pids"
+    # The tree records its PIDs well within the timeout and then keeps sleeping.
+    worker, outcome = _start_tree(marker, 5)
+    processes = _tree_pids(marker)
+    worker.join(30)
+    assert not worker.is_alive()
+    assert isinstance(outcome[0], subprocess.TimeoutExpired)
+    _assert_gone(processes)
+
+
+def test_a_cancelled_token_never_starts_a_process(monkeypatch):
+    def forbidden(*args, **kwargs):
+        raise AssertionError("no process may start after cancellation")
+
+    monkeypatch.setattr("winmonitor.providers.runner.subprocess.Popen", forbidden)
+    token = CancelToken()
+    token.cancel()
+    with pytest.raises(CommandCancelled):
+        run_command(["anything"], 30, token)
+    # The token installed for the thread applies when none is passed.
+    with cancellation(token), pytest.raises(CommandCancelled):
+        run_command(["anything"], 30)

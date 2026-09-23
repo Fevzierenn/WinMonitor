@@ -90,6 +90,10 @@ class Settings(BaseModel):
         le=900.0,
         description="Seconds to wait for one ccusage report; large agent histories take a minute",
     )
+    ai_usage_disk_cache: bool = Field(
+        default=True,
+        description="Keep the last ccusage reports on disk and show them while refreshing",
+    )
     markdown_roots: list[str] = Field(
         default_factory=list,
         description="Extra folders or files the Markdown view lists besides the working directory",
@@ -232,6 +236,11 @@ show_developer_ports = {str(defaults.show_developer_ports).lower()}
 # AI Usage (A): seconds to wait for one ccusage report. ccusage reads every
 # local agent log on each run, so a long history can take a minute or more.
 ai_usage_timeout = {defaults.ai_usage_timeout}
+
+# Keep the last good ccusage output for each filter under
+# %LOCALAPPDATA%\\winmonitor\\ai-usage-cache and show it immediately, marked with
+# its age, while a fresh report loads. Set to false to always wait for ccusage.
+ai_usage_disk_cache = {str(defaults.ai_usage_disk_cache).lower()}
 
 # Markdown view (M): the working directory is always listed, along with the
 # per-user CLAUDE.md / AGENTS.md / GEMINI.md files. Add more folders here.
