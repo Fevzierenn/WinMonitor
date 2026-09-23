@@ -1,7 +1,13 @@
 """Turning an AI usage report into table columns, cells and summary text.
 
 Pure functions with no widgets: :func:`render_report` is the one entry point
-the AI Usage pane calls, and everything it returns is ready to display.
+the AI Usage pane calls, and everything it returns is ready to display.  It
+normalizes the provider's raw report first (see :mod:`winmonitor.providers`),
+so everything below reads only the typed usage model, never a tool's JSON keys.
+
+Column keys are the model's field names (``period``, ``tokens.input``,
+``cost``, ...); a field the normalizer did not know is keyed ``extra.<name>``,
+which can never clash with a model field.
 """
 
 from __future__ import annotations
@@ -9,10 +15,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import date
-from typing import Any
 
 from rich.text import Text
 
+from ..models.usage import TokenCounts, UsageReport, UsageRow
+from ..providers import normalize_report
 from ..services.ai_usage import AIUsageReport, SourceUsage, source_name, usage_by_source
 from ..utils.formatting import bar, format_compact, format_cost, truncate
 from .table_pane import cell
@@ -26,68 +33,61 @@ __all__ = [
     "report_columns",
 ]
 
-_TOKEN_FIELDS = (
-    ("inputTokens", "INPUT"),
-    ("outputTokens", "OUTPUT"),
-    ("cacheCreationTokens", "CACHE CREATE"),
-    ("cacheReadTokens", "CACHE READ"),
-    ("totalTokens", "TOTAL TOKENS"),
+_TOKENS = "tokens."
+_EXTRA = "extra."
+_TOKEN_COLUMNS = (
+    ("input", "INPUT"),
+    ("output", "OUTPUT"),
+    ("cache_creation", "CACHE CREATE"),
+    ("cache_read", "CACHE READ"),
+    ("total", "TOTAL TOKENS"),
 )
-_COST_KEYS = frozenset({"totalCost", "costUSD"})
-_NUMERIC_KEYS = frozenset(key for key, _ in _TOKEN_FIELDS) | _COST_KEYS
+_PERIOD_LABELS = {"daily": "DATE", "weekly": "WEEK", "monthly": "MONTH", "session": "SESSION"}
 
 
-def report_columns(report: AIUsageReport) -> tuple[tuple[str, str], ...]:
-    """Choose columns from fields actually supplied by this ccusage report."""
+def _tokens(counts: TokenCounts, field: str) -> int | None:
+    value: int | None = getattr(counts, field)
+    return value
+
+
+def report_columns(report: UsageReport) -> tuple[tuple[str, str], ...]:
+    """Choose columns from the fields at least one row of this report supplied."""
     rows = report.rows
-    present = {key for row in rows for key in row}
-    first = {
-        "daily": ("period", "date"),
-        "weekly": ("period", "week"),
-        "monthly": ("period", "month"),
-        "session": ("period", "sessionId", "session"),
-    }[report.report_type]
-    period = next((key for key in first if key in present), first[0])
-    label = {"daily": "DATE", "weekly": "WEEK", "monthly": "MONTH", "session": "SESSION"}[
-        report.report_type
-    ]
-    columns = [(period, label)]
-    if "agent" in present:
-        columns.append(("agent", "AGENT"))
-    metadata_has_project = any(
-        isinstance(row.get("metadata"), dict) and "projectPath" in row["metadata"] for row in rows
+    columns = [("period", _PERIOD_LABELS.get(report.report_type, report.report_type.upper()))]
+    if any(row.source is not None or row.all_sources for row in rows):
+        columns.append(("source", "AGENT"))
+    if any(row.project is not None for row in rows):
+        columns.append(("project", "PROJECT"))
+    if any(row.models is not None for row in rows):
+        columns.append(("models", "MODELS"))
+    columns.extend(
+        (_TOKENS + field, label)
+        for field, label in _TOKEN_COLUMNS
+        if any(_tokens(row.tokens, field) is not None for row in rows)
     )
-    if "projectPath" in present or "project" in present or metadata_has_project:
-        columns.append(("projectPath" if "projectPath" in present else "project", "PROJECT"))
-    if "modelsUsed" in present or "models" in present:
-        columns.append(("modelsUsed" if "modelsUsed" in present else "models", "MODELS"))
-    columns.extend((key, label) for key, label in _TOKEN_FIELDS if key in present)
-    if "totalCost" in present or "costUSD" in present:
-        columns.append(("totalCost" if "totalCost" in present else "costUSD", "EST. COST USD"))
-    if report.report_type == "session":
-        for key, name in (("firstActivity", "FIRST ACTIVITY"), ("lastActivity", "LAST ACTIVITY")):
-            if key in present or any(
-                key in row.get("metadata", {})
-                for row in rows
-                if isinstance(row.get("metadata"), dict)
-            ):
-                columns.append((key, name))
-    known = {key for key, _ in columns} | {"metadata", "agents", "modelBreakdowns", "breakdown"}
-    for key in sorted(present - known):
-        if all(
-            row.get(key) is None or isinstance(row[key], (str, int, float, bool)) for row in rows
-        ):
-            label = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", key).replace("_", " ").upper()
-            columns.append((key, label))
+    if any(row.cost is not None for row in rows):
+        columns.append(("cost", "EST. COST USD"))
+    if any(row.first_activity is not None for row in rows):
+        columns.append(("first_activity", "FIRST ACTIVITY"))
+    if any(row.last_activity is not None for row in rows):
+        columns.append(("last_activity", "LAST ACTIVITY"))
+    for name in sorted({name for row in rows for name in row.extra}):
+        # cachedInputTokens -> CACHED INPUT TOKENS
+        label = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", name).replace("_", " ").upper()
+        columns.append((_EXTRA + name, label))
     return tuple(columns)
 
 
 def display_date(value: str, key: str, report_type: str | None = None) -> str:
-    """Change only the visible date order; ccusage JSON stays untouched."""
-    is_date = key in {"date", "week", "firstActivity", "lastActivity"} or (
+    """Show ``yyyy-mm-dd`` as ``dd-mm-yyyy`` (and months as ``mm-yyyy``).
+
+    Only the visible text changes; the report data stays as the tool wrote it.
+    ``key`` is the column key; a session's period is an ID, not a date.
+    """
+    is_date = key in {"first_activity", "last_activity"} or (
         key == "period" and report_type in ("daily", "weekly", "monthly")
     )
-    if key == "month" or (key == "period" and report_type == "monthly"):
+    if key == "period" and report_type == "monthly":
         match = re.fullmatch(r"(\d{4})-(\d{2})", value)
         if match and 1 <= int(match[2]) <= 12:
             return f"{match[2]}-{match[1]}"
@@ -102,25 +102,31 @@ def display_date(value: str, key: str, report_type: str | None = None) -> str:
     return value
 
 
-def report_cell(row: dict[str, Any], key: str, report_type: str | None = None) -> Text:
-    value = row.get(key)
-    if value is None and key in ("firstActivity", "lastActivity", "projectPath"):
-        metadata = row.get("metadata")
-        value = metadata.get(key) if isinstance(metadata, dict) else None
-    if key == "agent" and isinstance(value, str):
-        value = "All Sources" if value == "all" else source_name(value)
-    if isinstance(value, list):
-        value = ", ".join(str(item) for item in value)
-    if isinstance(value, dict) and key == "models":
-        value = ", ".join(str(item) for item in value)
-    if isinstance(value, str):
-        value = display_date(value, key, report_type)
-    if key in _NUMERIC_KEYS and isinstance(value, (int, float)) and not isinstance(value, bool):
-        # Numbers are right-aligned so the digits line up down the column.
-        # ccusage reports cost as a raw float (33.299283500000016); only the
-        # display is rounded, the JSON value is untouched.
-        text = format_cost(value) if key in _COST_KEYS else f"{value:,}"
-        return Text(text, justify="right")
+def report_cell(row: UsageRow, key: str, report_type: str | None = None) -> Text:
+    """The cell for column ``key`` (from :func:`report_columns`) of ``row``."""
+    # Numbers are right-aligned so the digits line up down the column.
+    if key == "cost":
+        # Tools report cost as a raw float (33.299283500000016); only the
+        # display is rounded.
+        return cell(None) if row.cost is None else Text(format_cost(row.cost), justify="right")
+    if key.startswith(_TOKENS):
+        count = _tokens(row.tokens, key.removeprefix(_TOKENS))
+        return cell(None) if count is None else Text(f"{count:,}", justify="right")
+    if key.startswith(_EXTRA):
+        return cell(row.extra.get(key.removeprefix(_EXTRA)))
+    value: str | None
+    if key == "source":
+        value = "All Sources" if row.all_sources else row.source and source_name(row.source)
+    elif key == "project":
+        value = row.project
+    elif key == "models":
+        value = None if row.models is None else ", ".join(row.models)
+    elif key in ("period", "first_activity", "last_activity"):
+        value = getattr(row, key)
+        if value is not None:
+            value = display_date(value, key, report_type)
+    else:
+        raise KeyError(f"Unknown AI usage column: {key}")
     return cell(value)
 
 
@@ -169,36 +175,30 @@ class RenderedReport:
 
 def render_report(report: AIUsageReport) -> RenderedReport:
     """Columns, cells, status message, totals line and per-source summary."""
-    if not report.rows:
+    usage = normalize_report(report)
+    if not usage.rows:
         return RenderedReport((), (), EMPTY_MESSAGE, "", None)
-    columns = report_columns(report)
+    columns = report_columns(usage)
     rows = tuple(
-        tuple(report_cell(row, key, report.report_type) for key, _ in columns)
-        for row in report.rows
+        tuple(report_cell(row, key, usage.report_type) for key, _ in columns) for row in usage.rows
     )
     # The summary adds information only when several sources are combined.
-    usage = usage_by_source(report) if report.source is None else ()
+    by_source = usage_by_source(usage) if usage.source is None else ()
     return RenderedReport(
         columns=columns,
         rows=rows,
-        message=f"{len(report.rows)} {report.report_type} row(s) from ccusage",
-        totals=_totals_line(report.totals),
-        sources=render_source_usage(usage) if usage else None,
+        message=f"{len(usage.rows)} {usage.report_type} row(s) from {usage.provider}",
+        totals=_totals_line(usage),
+        sources=render_source_usage(by_source) if by_source else None,
     )
 
 
-def _totals_line(totals: dict[str, Any]) -> str:
-    parts = ["CCUSAGE TOTALS"]
-    for key, label in (*_TOKEN_FIELDS, ("totalCost", "EST. COST USD")):
-        value = totals.get(key)
-        if value is None and key == "totalCost":
-            value = totals.get("totalCostUSD", totals.get("costUSD"))
-        if value is None:
-            continue
-        if key == "totalCost":
-            parts.append(f"{label}: {format_cost(value)}")
-        elif isinstance(value, int):
-            parts.append(f"{label}: {value:,}")
-        else:
-            parts.append(f"{label}: {value}")
+def _totals_line(report: UsageReport) -> str:
+    parts = [f"{report.provider.upper()} TOTALS"]
+    for field, label in _TOKEN_COLUMNS:
+        count = _tokens(report.totals, field)
+        if count is not None:
+            parts.append(f"{label}: {count:,}")
+    if report.total_cost is not None:
+        parts.append(f"EST. COST USD: {format_cost(report.total_cost)}")
     return "   |   ".join(parts)

@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
 
-from ..providers.base import SOURCE_ID, AIUsageReport, source_name
+from ..models.usage import UsageReport, UsageRow
+from ..providers.base import SOURCE_ID, source_name
 
 __all__ = ["SourceUsage", "usage_by_source"]
-
-_TOKEN_KEYS = ("inputTokens", "outputTokens", "cacheCreationTokens", "cacheReadTokens")
 
 
 @dataclass(frozen=True)
@@ -30,64 +28,66 @@ class SourceUsage:
         return source_name(self.source)
 
 
-def _number(value: Any) -> float | None:
-    # bool is an int subclass; a stray true/false must not count as a token.
-    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+@dataclass
+class _Tally:
+    input: int = 0
+    output: int = 0
+    cache_creation: int = 0
+    cache_read: int = 0
+    total: int = 0
+    cost: float | None = None
+    # A dict keeps first-seen order while de-duplicating.
+    models: dict[str, None] = field(default_factory=dict)
+
+    def add(self, row: UsageRow) -> None:
+        tokens = row.tokens
+        parts = (
+            tokens.input or 0,
+            tokens.output or 0,
+            tokens.cache_creation or 0,
+            tokens.cache_read or 0,
+        )
+        self.input += parts[0]
+        self.output += parts[1]
+        self.cache_creation += parts[2]
+        self.cache_read += parts[3]
+        self.total += tokens.total if tokens.total is not None else sum(parts)
+        if row.cost is not None:
+            self.cost = (self.cost or 0.0) + row.cost
+        self.models.update(dict.fromkeys(row.models or ()))
 
 
-def usage_by_source(report: AIUsageReport) -> tuple[SourceUsage, ...]:
+def usage_by_source(report: UsageReport) -> tuple[SourceUsage, ...]:
     """Sum each agent's usage over every row of ``report``, largest first.
 
-    Rows are attributed from ccusage's own JSON only: the ``agents`` list that
-    ``--by-agent`` adds to unified rows, a row's ``agent`` field (sessions and
-    single-source reports), or the report's source filter. A unified row with
+    Rows are attributed from what the tool itself reported: a combined row's
+    per-source split (ccusage ``--by-agent``), a row's own source (sessions and
+    single-source reports), or the report's source filter. A combined row with
     none of those cannot be split, so an empty tuple means "no breakdown", not
     "no usage".
     """
-    totals: dict[str, dict[str, Any]] = {}
-
-    def add(agent: str, row: dict[str, Any]) -> None:
-        entry = totals.setdefault(
-            agent, {"tokens": dict.fromkeys(_TOKEN_KEYS, 0), "total": 0, "cost": None, "models": {}}
-        )
-        parts = {key: int(_number(row.get(key)) or 0) for key in _TOKEN_KEYS}
-        for key, value in parts.items():
-            entry["tokens"][key] += value
-        total = _number(row.get("totalTokens"))
-        entry["total"] += int(total) if total is not None else sum(parts.values())
-        # Agents and ccusage versions disagree on the cost field's name.
-        for key in ("totalCost", "costUSD", "cost"):
-            cost = _number(row.get(key))
-            if cost is not None:
-                entry["cost"] = (entry["cost"] or 0.0) + cost
-                break
-        models = row.get("modelsUsed", row.get("models"))
-        if isinstance(models, (list, dict)):
-            # dict.fromkeys keeps first-seen order while de-duplicating.
-            entry["models"].update(dict.fromkeys(str(model) for model in models))
-
+    tallies: dict[str, _Tally] = {}
     for row in report.rows:
-        agents = row.get("agents")
-        if isinstance(agents, list) and agents:
-            for item in agents:
-                if isinstance(item, dict) and isinstance(item.get("agent"), str):
-                    add(item["agent"], item)
-        elif isinstance(row.get("agent"), str) and row["agent"] != "all":
-            add(row["agent"], row)
+        if row.by_source:
+            for item in row.by_source:
+                if item.source is not None:
+                    tallies.setdefault(item.source, _Tally()).add(item)
+        elif row.source is not None:
+            tallies.setdefault(row.source, _Tally()).add(row)
         elif report.source is not None:
-            add(report.source, row)
+            tallies.setdefault(report.source, _Tally()).add(row)
     usage = (
         SourceUsage(
-            source=agent,
-            total_tokens=entry["total"],
-            input_tokens=entry["tokens"]["inputTokens"],
-            output_tokens=entry["tokens"]["outputTokens"],
-            cache_creation_tokens=entry["tokens"]["cacheCreationTokens"],
-            cache_read_tokens=entry["tokens"]["cacheReadTokens"],
-            cost=entry["cost"],
-            models=tuple(entry["models"]),
+            source=source,
+            total_tokens=tally.total,
+            input_tokens=tally.input,
+            output_tokens=tally.output,
+            cache_creation_tokens=tally.cache_creation,
+            cache_read_tokens=tally.cache_read,
+            cost=tally.cost,
+            models=tuple(tally.models),
         )
-        for agent, entry in totals.items()
-        if agent != "all" and SOURCE_ID.fullmatch(agent)
+        for source, tally in tallies.items()
+        if source != "all" and SOURCE_ID.fullmatch(source)
     )
     return tuple(sorted(usage, key=lambda item: (-item.total_tokens, item.source)))

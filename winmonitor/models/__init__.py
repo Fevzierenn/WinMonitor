@@ -4,6 +4,7 @@ from .connection import ACTIVE_STATES, LISTEN_STATE, ConnectionInfo
 from .port import CORE_DEVELOPER_PORTS, DEVELOPER_PORTS, PortInfo, describe_port, is_developer_port
 from .process import ProcessInfo, ProcessSort
 from .system import CpuInfo, DiskInfo, MemoryInfo, NetworkIoInfo, SystemInfo
+from .usage import ExtraValue, TokenCounts, UsageReport, UsageRow
 
 __all__ = [
     "ACTIVE_STATES",
@@ -13,12 +14,16 @@ __all__ = [
     "ConnectionInfo",
     "CpuInfo",
     "DiskInfo",
+    "ExtraValue",
     "MemoryInfo",
     "NetworkIoInfo",
     "PortInfo",
     "ProcessInfo",
     "ProcessSort",
     "SystemInfo",
+    "TokenCounts",
+    "UsageReport",
+    "UsageRow",
     "describe_port",
     "is_developer_port",
 ]
