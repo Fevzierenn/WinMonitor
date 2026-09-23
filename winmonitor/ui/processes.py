@@ -5,7 +5,7 @@ from __future__ import annotations
 from ..app.state import AppState
 from ..models import ProcessInfo
 from ..utils.formatting import format_bytes, truncate
-from .table_pane import Column, TablePane, cell
+from .table_pane import Column, Selection, TablePane, cell
 from .widgets import severity_style
 
 __all__ = ["ProcessesPane"]
@@ -13,6 +13,8 @@ __all__ = ["ProcessesPane"]
 
 class ProcessesPane(TablePane):
     """Every running process, sorted and filtered by the application state."""
+
+    EXPORT_NAME = "processes"
 
     COLUMNS = (
         Column("pid", "PID", 8),
@@ -31,7 +33,7 @@ class ProcessesPane(TablePane):
     def update_state(self, state: AppState) -> None:
         """Rebuild the table from the newest snapshot."""
         processes = state.visible_processes()
-        self.rebuild([(str(process.pid), _row(process)) for process in processes])
+        self.rebuild([(str(process.pid), _row(process), process) for process in processes])
 
         total = len(state.snapshot.processes)
         parts = [f"{len(processes)} of {total} processes"]
@@ -43,6 +45,13 @@ class ProcessesPane(TablePane):
         if not state.show_system_processes:
             parts.append("system processes hidden")
         self.set_caption("   |   ".join(parts))
+
+    def select(self, item: ProcessInfo, state: AppState) -> Selection:
+        # Choosing a process clears any port picked in another view.
+        return Selection(pid=item.pid)
+
+    def export_items(self, state: AppState) -> list[ProcessInfo]:
+        return state.visible_processes()
 
 
 def _row(process: ProcessInfo) -> tuple:

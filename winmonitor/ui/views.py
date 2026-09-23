@@ -42,9 +42,9 @@ class ViewSpec:
     label: str
     help: str
     factory: PaneFactory
-    #: Pressing ``/`` here switches to this view's search instead (the
-    #: dashboard has nothing to search, so it opens the process search).
-    search_redirect: str | None = None
+    #: A summary view that uses another view's search and export: the
+    #: dashboard has nothing of its own, so ``/`` and ``e`` act on processes.
+    stands_for: str | None = None
 
     def create(self, app: WinMonitorApp) -> Widget:
         return self.factory(app, self.id)
@@ -67,7 +67,7 @@ VIEWS: tuple[ViewSpec, ...] = (
         "System",
         "Dashboard (system)",
         lambda app, view_id: DashboardPane(id=view_id),
-        search_redirect="processes",
+        stands_for="processes",
     ),
     ViewSpec(
         "processes",

@@ -331,3 +331,16 @@ async def test_standalone_views_explain_instead_of_exporting(make_app, tmp_path,
         await pilot.press("e")
         assert hint in status(app)
         assert list(Path(tmp_path).glob("*.json")) == []
+
+
+def test_connection_rows_resolve_to_their_own_local_port(state):
+    from winmonitor.ui.connections import _local_port
+
+    # Two sockets share port 8080 (IPv4 and IPv6); each row maps to its own.
+    for connection in state.snapshot.connections:
+        if connection.local_port == 8080:
+            port = _local_port(connection, state)
+            assert port.local_address == connection.local_address
+            assert port.pid == connection.pid
+    orphan = next(c for c in state.snapshot.connections if c.pid is None)
+    assert _local_port(orphan, state).local_port == orphan.local_port

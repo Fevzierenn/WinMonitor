@@ -5,11 +5,17 @@ must not move the cursor out from under the user.  :meth:`TablePane.rebuild`
 therefore remembers the *key* of the highlighted row (not its index) and puts
 the cursor back on the same row afterwards, so a process keeps being selected
 even when sorting moves it up or down the list.
+
+Each table also remembers which model object every row shows, so it can tell
+the app what is selected (:meth:`TablePane.selection`) and what to export,
+without the app decoding row keys or knowing which view is which.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Any, ClassVar
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -17,7 +23,27 @@ from textual.containers import Vertical
 from textual.widgets import DataTable, Static
 from textual.widgets.data_table import CellDoesNotExist, RowDoesNotExist
 
-__all__ = ["Column", "TablePane", "cell"]
+from ..app.state import AppState
+from ..models import PortInfo
+
+__all__ = ["Column", "Row", "Selection", "TablePane", "cell"]
+
+#: ``(key, cells, item)``: the row key, its rendered cells and the model object
+#: (process, port or connection) the row shows.
+Row = tuple[str, Sequence[Text], Any]
+
+
+@dataclass(frozen=True)
+class Selection:
+    """What the highlighted row refers to.
+
+    ``port_info`` is set by the port and connection tables; its presence is
+    what makes Details open the port screen rather than the process screen.
+    """
+
+    pid: int | None
+    port: int | None = None
+    port_info: PortInfo | None = None
 
 
 class Column:
@@ -48,6 +74,16 @@ class TablePane(Vertical):
 
     #: Shown above the table.
     CAPTION: str = ""
+
+    #: What Details and the "nothing selected" hint refer to.
+    SELECTS: ClassVar[str] = "process"
+
+    #: Export kind and file name prefix (see ``winmonitor.exporters``).
+    EXPORT_NAME: ClassVar[str] = ""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._items: dict[str, Any] = {}
 
     def compose(self) -> ComposeResult:
         if self.CAPTION:
@@ -85,19 +121,35 @@ class TablePane(Vertical):
             return None
         return row_key.value
 
-    def rebuild(self, rows: Sequence[tuple[str, Sequence[Text]]]) -> None:
+    def selection(self, state: AppState, key: str | None = None) -> Selection | None:
+        """What row ``key`` (default: the highlighted row) refers to."""
+        key = key if key is not None else self.selected_key
+        item = self._items.get(key) if key is not None else None
+        return self.select(item, state) if item is not None else None
+
+    def select(self, item: Any, state: AppState) -> Selection:
+        """Describe ``item``, one of this table's rows. Subclasses override."""
+        raise NotImplementedError
+
+    def export_items(self, state: AppState) -> list[Any]:
+        """The rows the user can currently see, for ``e``. Subclasses override."""
+        raise NotImplementedError
+
+    def rebuild(self, rows: Sequence[Row]) -> None:
         """Replace every row, keeping the cursor on the same logical row.
 
         Args:
-            rows: ``(key, cells)`` pairs in display order.
+            rows: ``(key, cells, item)`` triples in display order.
         """
         table = self.table
         previous = self.selected_key
         scroll_y = table.scroll_offset.y
 
         table.clear()
-        for key, cells in rows:
+        self._items = {}
+        for key, cells, item in rows:
             table.add_row(*cells, key=key)
+            self._items[key] = item
 
         if previous is not None:
             try:

@@ -318,6 +318,7 @@ Navigation:
 |---|---|
 | `↑` `↓` | Move the cursor |
 | `Enter` | Show details for the selected row |
+| `Tab` / `Shift+Tab` | Next / previous view (moves between fields while typing in one) |
 | `/` | Search (filters the file list in Markdown) |
 | `Esc` | Close search or dialog |
 | `N` / `I` | Change sort column / reverse sort |

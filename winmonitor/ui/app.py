@@ -45,14 +45,14 @@ from ..app.controller import MonitorController
 from ..app.state import AppState, Snapshot
 from ..config.settings import Settings
 from ..exporters import export
-from ..models import PortInfo, ProcessInfo
-from ..services import network_service
+from ..models import PortInfo
 from ..services.ai_usage import AIUsageService, CCUsageAdapter
 from ..services.termination_service import TerminationPlan, TerminationResult
 from ..utils.formatting import format_clock
 from .pane import StandalonePane
 from .port_details import PortDetailsScreen
 from .process_details import ProcessDetailsScreen
+from .table_pane import Selection, TablePane
 from .views import VIEW_IDS, VIEWS, key_help, view_spec
 from .widgets import ConfirmScreen, HelpScreen, StatusBar, TypedConfirmScreen
 
@@ -253,54 +253,35 @@ class WinMonitorApp(App[None]):
 
     # -- selection --------------------------------------------------------- #
 
+    def _table_pane(self) -> TablePane | None:
+        """The current pane when it is one of the live tables."""
+        pane = self.current_pane()
+        return pane if isinstance(pane, TablePane) else None
+
+    def _event_selection(self, event: DataTable.RowHighlighted | DataTable.RowSelected):
+        """What a row event in the visible live table refers to, if anything."""
+        pane = self._table_pane()
+        if pane is None or event.data_table is not pane.table or event.row_key is None:
+            return None
+        return pane.selection(self.state, event.row_key.value)
+
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         """Track the cursor so kill and details know what they act on."""
-        if self._standalone_pane() is not None or event.data_table.id == "ai-table":
-            return
-        self._remember_selection(event.row_key.value if event.row_key else None)
+        selection = self._event_selection(event)
+        if selection is not None:
+            self._remember_selection(selection)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Enter on a row opens the matching details screen."""
-        if self._standalone_pane() is not None or event.data_table.id == "ai-table":
-            return
-        self._remember_selection(event.row_key.value if event.row_key else None)
-        self.action_details()
+        selection = self._event_selection(event)
+        if selection is not None:
+            self._remember_selection(selection)
+            self.action_details()
 
-    def _remember_selection(self, key: str | None) -> None:
-        """Decode a row key into the selected PID and port."""
-        if not key:
-            return
-        if self.state.view == "processes":
-            with suppress(ValueError):
-                self.state.selected_pid = int(key)
-                self.state.selected_port = None
-            return
-        # Port and connection keys look like ``TCP|0.0.0.0:8080|...|1234``.
-        parts = key.split("|")
-        if len(parts) >= 2:
-            endpoint = parts[1]
-            with suppress(ValueError):
-                self.state.selected_port = int(endpoint.rsplit(":", 1)[1])
-        with suppress(ValueError):
-            pid_part = parts[-1]
-            self.state.selected_pid = int(pid_part) if pid_part != "None" else None
-
-    def _selected_process(self) -> ProcessInfo | None:
-        if self.state.selected_pid is None:
-            return None
-        return self.state.selected_process()
-
-    def _selected_port_info(self) -> PortInfo | None:
-        """The port row under the cursor, if the current view has one."""
-        if self.state.view not in ("ports", "connections") or self.state.selected_port is None:
-            return None
-        for port in self.state.visible_ports():
-            if port.local_port == self.state.selected_port and port.pid == self.state.selected_pid:
-                return port
-        candidates = network_service.find_port(
-            self.state.snapshot.connections, self.state.selected_port, listening_only=False
-        )
-        return candidates[0] if candidates else None
+    def _remember_selection(self, selection: Selection) -> None:
+        """Keep the selection in the state: kill and the enrich pass read it."""
+        self.state.selected_pid = selection.pid
+        self.state.selected_port = selection.port
 
     # -- navigation actions ------------------------------------------------ #
 
@@ -405,9 +386,9 @@ class WinMonitorApp(App[None]):
             if not pane.focus_search():
                 self.status.set_message(pane.SEARCH_HINT, "information")
             return
-        redirect = view_spec(self.state.view).search_redirect
-        if redirect is not None:
-            self.action_view(redirect)
+        stands_for = view_spec(self.state.view).stands_for
+        if stands_for is not None:
+            self.action_view(stands_for)
         row = self.query_one("#search-row")
         row.remove_class("hidden")
         search = self.query_one("#search", Input)
@@ -473,10 +454,15 @@ class WinMonitorApp(App[None]):
         """Open the details screen for whatever is selected."""
         if self._standalone_pane() is not None:
             return
-        if self.state.view in ("ports", "connections"):
-            self._show_port_details()
-        else:
+        pane = self._table_pane()
+        if pane is None or pane.SELECTS == "process":
             self._show_process_details()
+            return
+        selection = pane.selection(self.state)
+        if selection is None or selection.port_info is None:
+            self.status.set_message("Select a port first.", "warning")
+            return
+        self._show_port_details(selection.port_info)
 
     @work
     async def _show_process_details(self) -> None:
@@ -497,11 +483,7 @@ class WinMonitorApp(App[None]):
             self._termination_flow(pid, force=choice == "force")
 
     @work
-    async def _show_port_details(self) -> None:
-        port = self._selected_port_info()
-        if port is None:
-            self.status.set_message("Select a port first.", "warning")
-            return
+    async def _show_port_details(self, port: PortInfo) -> None:
         if port.pid is not None:
             enriched = await asyncio.to_thread(
                 self.controller.find_port, port.local_port, port.protocol
@@ -549,7 +531,7 @@ class WinMonitorApp(App[None]):
 
     def _termination_target(self) -> int | None:
         """The PID the kill keys act on, or ``None`` with an explanation."""
-        if self.state.view == "dashboard" or self._standalone_pane() is not None:
+        if self._table_pane() is None:
             self.status.set_message(
                 "Open the Processes or Ports view to terminate a process.", "warning"
             )
@@ -624,24 +606,19 @@ class WinMonitorApp(App[None]):
 
     def action_export_view(self) -> None:
         """Write the current view to a timestamped JSON file."""
-        pane = self._standalone_pane()
-        if pane is not None:
-            self.status.set_message(pane.EXPORT_HINT, "information")
+        standalone = self._standalone_pane()
+        if standalone is not None:
+            self.status.set_message(standalone.EXPORT_HINT, "information")
+            return
+        stands_for = view_spec(self.state.view).stands_for
+        pane = self.query_one(f"#{stands_for}") if stands_for else self.current_pane()
+        if not isinstance(pane, TablePane):
+            self.status.set_message("This view cannot be exported.", "information")
             return
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        name = pane.EXPORT_NAME
         try:
-            if self.state.view == "ports":
-                path = export(self.state.visible_ports(), Path(f"ports-{stamp}.json"), "ports")
-            elif self.state.view == "connections":
-                path = export(
-                    self.state.visible_connections(),
-                    Path(f"connections-{stamp}.json"),
-                    "connections",
-                )
-            else:
-                path = export(
-                    self.state.visible_processes(), Path(f"processes-{stamp}.json"), "processes"
-                )
+            path = export(pane.export_items(self.state), Path(f"{name}-{stamp}.json"), name)
         except OSError as exc:
             self.status.set_message(f"Export failed: {exc}", "error")
             return

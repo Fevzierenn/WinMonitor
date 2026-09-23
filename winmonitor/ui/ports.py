@@ -5,7 +5,7 @@ from __future__ import annotations
 from ..app.state import AppState
 from ..models import PortInfo
 from ..utils.formatting import truncate
-from .table_pane import Column, TablePane, cell
+from .table_pane import Column, Selection, TablePane, cell
 
 __all__ = ["PortsPane"]
 
@@ -15,6 +15,9 @@ _HEALTHY_STATES = {"LISTENING", "BOUND", "ESTABLISHED"}
 
 class PortsPane(TablePane):
     """Listening ports, or every local endpoint when the filter is relaxed."""
+
+    SELECTS = "port"
+    EXPORT_NAME = "ports"
 
     COLUMNS = (
         Column("proto", "PROTO", 7),
@@ -31,7 +34,7 @@ class PortsPane(TablePane):
     def update_state(self, state: AppState) -> None:
         """Rebuild the table from the newest snapshot."""
         ports = state.visible_ports()
-        self.rebuild([(port.key, _row(port)) for port in ports])
+        self.rebuild([(port.key, _row(port), port) for port in ports])
 
         scope = "listening ports" if state.listening_only else "local endpoints"
         parts = [f"{len(ports)} {scope}"]
@@ -42,6 +45,12 @@ class PortsPane(TablePane):
             parts.append(f"filter: {state.port_query!r}")
         parts.append("press l to toggle listening-only")
         self.set_caption("   |   ".join(parts))
+
+    def select(self, item: PortInfo, state: AppState) -> Selection:
+        return Selection(pid=item.pid, port=item.local_port, port_info=item)
+
+    def export_items(self, state: AppState) -> list[PortInfo]:
+        return state.visible_ports()
 
 
 def _row(port: PortInfo) -> tuple:
