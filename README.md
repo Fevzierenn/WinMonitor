@@ -5,7 +5,7 @@
 [![Download](https://img.shields.io/github/v/release/Fevzierenn/WinMonitor?label=download&color=2f81f7)](https://github.com/Fevzierenn/WinMonitor/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078d4)](https://github.com/Fevzierenn/WinMonitor/releases/latest)
 [![Python](https://img.shields.io/badge/python-3.12%2B%20(optional)-3776ab)](#option-b--install-with-python-for-developers-and-faster-startup)
-[![Tests](https://img.shields.io/badge/tests-358%20passing-3fb950)](#for-developers)
+[![Tests](https://img.shields.io/badge/tests-551%20passing-3fb950)](#for-developers)
 [![Licence](https://img.shields.io/badge/licence-MIT-lightgrey)](#licence)
 
 WinMonitor is a Windows system monitor built for developers who need to quickly
@@ -218,7 +218,7 @@ winmonitor --version
 Expected output:
 
 ```text
-winmonitor 1.0.0
+winmonitor 1.2.0
 ```
 
 If `winmonitor` is not recognised:
@@ -628,7 +628,7 @@ Run the tests:
 python -m pytest
 ```
 
-The project currently contains **358 tests**.
+The project currently contains **551 tests**.
 
 ---
 

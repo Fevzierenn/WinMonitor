@@ -3,8 +3,8 @@
 # something worth being suspicious of.
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 0, 0, 0),
-    prodvers=(1, 0, 0, 0),
+    filevers=(1, 2, 0, 0),
+    prodvers=(1, 2, 0, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -21,12 +21,12 @@ VSVersionInfo(
             StringStruct('CompanyName', 'WinMonitor contributors'),
             StringStruct('FileDescription',
                          'Terminal system, process and port monitor for Windows 11'),
-            StringStruct('FileVersion', '1.0.0'),
+            StringStruct('FileVersion', '1.2.0'),
             StringStruct('InternalName', 'winmonitor'),
             StringStruct('LegalCopyright', 'MIT licence'),
             StringStruct('OriginalFilename', 'winmonitor.exe'),
             StringStruct('ProductName', 'WinMonitor'),
-            StringStruct('ProductVersion', '1.0.0'),
+            StringStruct('ProductVersion', '1.2.0'),
           ],
         )
       ]
