@@ -339,3 +339,80 @@ def test_a_cancelled_token_never_starts_a_process(monkeypatch):
     # The token installed for the thread applies when none is passed.
     with cancellation(token), pytest.raises(CommandCancelled):
         run_command(["anything"], 30)
+
+
+#: A parent that starts a sleeping child, records the child's PID and exits at
+#: once, leaving the child holding the output pipes.
+_ORPHAN_SCRIPT = """
+import os, subprocess, sys
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+with open(sys.argv[1] + ".tmp", "w") as handle:
+    handle.write(str(child.pid))
+os.replace(sys.argv[1] + ".tmp", sys.argv[1])
+"""
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Job Objects are Windows-only")
+def test_cancel_reaches_a_child_whose_parent_already_exited(tmp_path):
+    # Without a Job Object the child cannot be found once its parent is gone:
+    # it would run on as an orphan and hold the pipes until the timeout.
+    marker = tmp_path / "pid"
+    token = CancelToken()
+    outcome: list[BaseException | RunResult] = []
+
+    def run():
+        try:
+            outcome.append(
+                run_command([sys.executable, "-c", _ORPHAN_SCRIPT, str(marker)], 60, token)
+            )
+        except BaseException as exc:
+            outcome.append(exc)
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    orphan = _tree_pids(marker)
+    time.sleep(0.5)  # let the parent exit
+    token.cancel()
+    worker.join(20)
+    assert not worker.is_alive()
+    assert isinstance(outcome[0], CommandCancelled)
+    _assert_gone(orphan)
+
+
+class _FakeProcess:
+    def __init__(self, pid, born, children=()):
+        self.pid = pid
+        self._born = born
+        self._children = list(children)
+
+    def create_time(self):
+        return self._born
+
+    def children(self):
+        return self._children
+
+
+def test_tree_walk_never_takes_a_process_older_than_its_parent():
+    from winmonitor.providers.runner import _descendants
+
+    # PID reuse: a stranger whose parent exited looks like a child of our node
+    # once node receives that parent's old PID; it is older than node, though.
+    stranger = _FakeProcess(3, born=50)
+    grandchild = _FakeProcess(4, born=150)
+    node = _FakeProcess(2, born=100, children=[stranger, grandchild])
+    root = _FakeProcess(1, born=10, children=[node])
+    assert [process.pid for process in _descendants(root)] == [2, 4]
+
+
+def test_cancel_does_not_wait_for_processes_to_exit(tmp_path):
+    marker = tmp_path / "pids"
+    token = CancelToken()
+    worker, outcome = _start_tree(marker, 60, token)
+    processes = _tree_pids(marker)
+    started = time.monotonic()
+    token.cancel()
+    # cancel() runs on the UI thread and must return without waiting.
+    assert time.monotonic() - started < 1.0
+    worker.join(20)
+    assert isinstance(outcome[0], CommandCancelled)
+    _assert_gone(processes)

@@ -166,3 +166,37 @@ async def test_large_markdown_renders_with_no_color_set(monkeypatch, make_app, t
         await settle(app, pilot)
         assert app.query_one("#md-fast", RenderedLines).line_count > 300
         assert app.is_running
+
+
+@pytest.mark.asyncio
+async def test_short_render_of_a_large_file_with_no_color(monkeypatch, make_app, tmp_path):
+    # Over the size limit, but Rich renders almost nothing (an HTML comment),
+    # so the view fills its height with blank rows, which need a style too.
+    monkeypatch.setenv("NO_COLOR", "1")
+    text = "# Short\n\nOne line.\n\n<!--\n" + "x" * (2 * INTERACTIVE_MAX_BYTES) + "\n-->\n"
+    (tmp_path / "short.md").write_text(text, encoding="utf-8")
+    app = make_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(app, pilot)
+        await pilot.press("m")
+        await settle(app, pilot)
+        app.query_one("#markdown", MarkdownPane).open_document((tmp_path / "short.md").resolve())
+        await settle(app, pilot)
+        await pilot.pause(0.2)
+        assert app.query_one("#md-fast", RenderedLines).line_count < 40
+        assert app.is_running
+
+
+@pytest.mark.asyncio
+async def test_filter_enter_enter_opens_the_match(make_app, tmp_path):
+    (tmp_path / "README.md").write_text("# Readme\n", encoding="utf-8")
+    (tmp_path / "big-notes.md").write_text("# Notes\n", encoding="utf-8")
+    app = make_app()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await settle(app, pilot)
+        await pilot.press("m")
+        await settle(app, pilot)
+        await pilot.press("slash", *"notes", "enter", "enter")
+        await settle(app, pilot)
+        pane = app.query_one("#markdown", MarkdownPane)
+        assert pane.current == (tmp_path / "big-notes.md").resolve()

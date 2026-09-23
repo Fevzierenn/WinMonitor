@@ -159,9 +159,13 @@ class AIUsageService:
             memory = self._reports.get(keys[0])
             if not refresh and memory is not None and self._fresh(memory[0]):
                 return None
+        # The newest usable copy wins. Preferring the per-agent file outright
+        # would show a weeks-old copy after ccusage stopped supporting
+        # --by-agent, even with a plain copy from an hour ago on disk.
+        best: CachedReport | None = None
         for key in keys:
             entry = self.disk_cache.load(key)
-            if entry is None:
+            if entry is None or (best is not None and entry.saved_at <= best.saved_at):
                 continue
             try:
                 report = parse_output(entry.stdout, report_type, source)
@@ -169,8 +173,8 @@ class AIUsageService:
                 logger.warning("Ignoring AI Usage cache entry %s: %s", key, exc)
                 continue
             sources = _discovered_sources(report) if source is None else None
-            return CachedReport(report, sources, entry.saved_at)
-        return None
+            best = CachedReport(report, sources, entry.saved_at)
+        return best
 
     def _get_unified_report(self, report_type: str, *, refresh: bool) -> AIUsageReport:
         """A unified report with per-agent rows when this ccusage supports them."""

@@ -106,7 +106,7 @@ class RenderedLines(ScrollView, can_focus=True):
         scroll_x, scroll_y = self.scroll_offset
         index = scroll_y + y
         if index >= len(self._lines):
-            return Strip.blank(self.size.width)
+            return Strip.blank(self.size.width, Style.null())
         return self._lines[index].crop(scroll_x, scroll_x + self.size.width)
 
 
@@ -214,6 +214,11 @@ class MarkdownPane(StandalonePane, Vertical):
             Option(self._option_label(doc), id=str(index))
             for index, doc in enumerate(self._visible)
         )
+        # Always highlight something, so filter, Enter, Enter opens the match
+        # without having to press Down first: the open file if it is listed.
+        if self._visible:
+            paths = [doc.path for doc in self._visible]
+            files.highlighted = paths.index(self.current) if self.current in paths else 0
         shown = len(self._visible)
         total = len(self.documents)
         self.query_one("#md-count", Static).update(

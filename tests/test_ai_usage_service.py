@@ -195,3 +195,18 @@ def test_cancelled_load_raises_cancelled():
     with pytest.raises(AIUsageError) as raised:
         AIUsageService(provider).load_report("daily", "claude", cancel=token)
     assert raised.value.kind == "cancelled"
+
+
+def test_newest_cached_copy_wins(tmp_path):
+    cache = UsageCache(tmp_path)
+    # An old per-agent copy (ccusage has since dropped --by-agent) and a new plain one.
+    cache.save(
+        (None, "daily", True), '{"daily": [{"period": "old"}], "totals": {}}', now=NOW - 20 * 86400
+    )
+    cache.save(
+        (None, "daily", False), '{"daily": [{"period": "new"}], "totals": {}}', now=NOW - 3600
+    )
+    cached = AIUsageService(JsonProvider(), disk_cache=cache).cached_report("daily")
+    assert cached is not None
+    assert cached.report.rows == ({"period": "new"},)
+    assert cached.saved_at == NOW - 3600

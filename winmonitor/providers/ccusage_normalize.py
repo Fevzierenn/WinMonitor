@@ -57,7 +57,8 @@ def _count(value: Any) -> int | None:
 
 
 def _amount(value: Any) -> float | None:
-    return float(value) if _is_number(value) else None
+    # json.loads accepts NaN and Infinity; neither is a cost anyone can read.
+    return float(value) if _is_number(value) and math.isfinite(value) else None
 
 
 def _text(value: Any) -> str | None:

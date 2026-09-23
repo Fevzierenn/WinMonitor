@@ -282,3 +282,22 @@ def test_registry_rejects_an_unknown_provider():
         normalize_report(raw)
     assert caught.value.kind == "unsupported"
     assert "vendor-api" in str(caught.value)
+
+
+def test_non_finite_costs_count_as_not_reported():
+    from winmonitor.providers.base import AIUsageReport
+    from winmonitor.providers.ccusage_normalize import normalize
+
+    raw = AIUsageReport(
+        "daily",
+        None,
+        (
+            {"period": "2026-09-20", "totalCost": float("nan")},
+            {"period": "2026-09-21", "totalCost": float("inf")},
+        ),
+        {"totalCost": float("nan")},
+        {},
+    )
+    report = normalize(raw)
+    assert [row.cost for row in report.rows] == [None, None]
+    assert report.total_cost is None
