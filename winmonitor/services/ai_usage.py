@@ -1,335 +1,44 @@
-"""ccusage JSON access and short-lived AI usage report caching."""
+"""AI usage: the service the UI talks to, with a short-lived report cache.
+
+Providers live in :mod:`winmonitor.providers`; the names re-exported below keep
+``from winmonitor.services.ai_usage import ...`` working for existing callers.
+"""
 
 from __future__ import annotations
 
-import json
 import logging
-import re
-import shutil
-import subprocess
 import threading
 import time
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Protocol
+
+from ..providers.base import (
+    BY_AGENT_REPORTS,
+    REPORT_TYPES,
+    SOURCE_NAMES,
+    AIUsageError,
+    AIUsageProvider,
+    AIUsageReport,
+    source_name,
+    sources_in_report,
+)
+from ..providers.ccusage import CCUsageAdapter
+from .usage_summary import SourceUsage, usage_by_source
 
 logger = logging.getLogger(__name__)
 
-REPORT_TYPES = ("daily", "weekly", "monthly", "session")
-#: Display names for the agents ccusage 20.x reports. Anything missing here is
-#: still shown, title-cased, by :func:`source_name`.
-SOURCE_NAMES = {
-    "claude": "Claude Code",
-    "codex": "Codex",
-    "opencode": "OpenCode",
-    "gemini": "Gemini CLI",
-    "copilot": "Copilot CLI",
-    "amp": "Amp",
-    "droid": "Droid",
-    "codebuff": "Codebuff",
-    "hermes": "Hermes",
-    "pi": "pi-agent",
-    "goose": "Goose",
-    "kilo": "Kilo",
-    "antigravity": "Antigravity",
-    "kimi": "Kimi",
-    "qwen": "Qwen",
-    "openclaw": "OpenClaw",
-    "grok": "Grok Build CLI",
-    "zcode": "ZCode",
-}
-_SOURCE_ID = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_-]*\Z")
-#: Report types for which ccusage accepts ``--by-agent``.
-BY_AGENT_REPORTS = frozenset({"daily", "weekly", "monthly"})
-_TOKEN_KEYS = ("inputTokens", "outputTokens", "cacheCreationTokens", "cacheReadTokens")
-
-
-def source_name(source: str) -> str:
-    """Keep unknown ccusage agent identifiers readable."""
-    return SOURCE_NAMES.get(source, source.replace("-", " ").replace("_", " ").title())
-
-
-class AIUsageError(Exception):
-    """A report failure that can be shown without exposing a traceback."""
-
-    def __init__(self, kind: str, message: str) -> None:
-        self.kind = kind
-        super().__init__(message)
-
-
-@dataclass(frozen=True)
-class AIUsageReport:
-    report_type: str
-    source: str | None
-    rows: tuple[dict[str, Any], ...]
-    totals: dict[str, Any]
-    raw: dict[str, Any]
-
-
-def sources_in_report(report: AIUsageReport) -> tuple[str, ...]:
-    """Read source IDs ccusage already included in a unified report."""
-    found: set[str] = set()
-    for row in report.rows:
-        agents = row.get("agents")
-        metadata = row.get("metadata")
-        if isinstance(agents, list):
-            found.update(
-                item["agent"]
-                for item in agents
-                if isinstance(item, dict) and isinstance(item.get("agent"), str)
-            )
-        if isinstance(metadata, dict) and isinstance(metadata.get("agents"), list):
-            found.update(item for item in metadata["agents"] if isinstance(item, str))
-        if isinstance(row.get("agent"), str):
-            found.add(row["agent"])
-    return tuple(sorted(item for item in found if item != "all" and _SOURCE_ID.fullmatch(item)))
-
-
-@dataclass(frozen=True)
-class SourceUsage:
-    """Token and estimated-cost totals for one agent across a whole report."""
-
-    source: str
-    total_tokens: int
-    input_tokens: int
-    output_tokens: int
-    cache_creation_tokens: int
-    cache_read_tokens: int
-    cost: float | None
-    models: tuple[str, ...]
-
-    @property
-    def name(self) -> str:
-        return source_name(self.source)
-
-
-def _number(value: Any) -> float | None:
-    # bool is an int subclass; a stray true/false must not count as a token.
-    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
-
-
-def usage_by_source(report: AIUsageReport) -> tuple[SourceUsage, ...]:
-    """Sum each agent's usage over every row of ``report``, largest first.
-
-    Rows are attributed from ccusage's own JSON only: the ``agents`` list that
-    ``--by-agent`` adds to unified rows, a row's ``agent`` field (sessions and
-    single-source reports), or the report's source filter. A unified row with
-    none of those cannot be split, so an empty tuple means "no breakdown", not
-    "no usage".
-    """
-    totals: dict[str, dict[str, Any]] = {}
-
-    def add(agent: str, row: dict[str, Any]) -> None:
-        entry = totals.setdefault(
-            agent, {"tokens": dict.fromkeys(_TOKEN_KEYS, 0), "total": 0, "cost": None, "models": {}}
-        )
-        parts = {key: int(_number(row.get(key)) or 0) for key in _TOKEN_KEYS}
-        for key, value in parts.items():
-            entry["tokens"][key] += value
-        total = _number(row.get("totalTokens"))
-        entry["total"] += int(total) if total is not None else sum(parts.values())
-        # Agents and ccusage versions disagree on the cost field's name.
-        for key in ("totalCost", "costUSD", "cost"):
-            cost = _number(row.get(key))
-            if cost is not None:
-                entry["cost"] = (entry["cost"] or 0.0) + cost
-                break
-        models = row.get("modelsUsed", row.get("models"))
-        if isinstance(models, (list, dict)):
-            # dict.fromkeys keeps first-seen order while de-duplicating.
-            entry["models"].update(dict.fromkeys(str(model) for model in models))
-
-    for row in report.rows:
-        agents = row.get("agents")
-        if isinstance(agents, list) and agents:
-            for item in agents:
-                if isinstance(item, dict) and isinstance(item.get("agent"), str):
-                    add(item["agent"], item)
-        elif isinstance(row.get("agent"), str) and row["agent"] != "all":
-            add(row["agent"], row)
-        elif report.source is not None:
-            add(report.source, row)
-    usage = (
-        SourceUsage(
-            source=agent,
-            total_tokens=entry["total"],
-            input_tokens=entry["tokens"]["inputTokens"],
-            output_tokens=entry["tokens"]["outputTokens"],
-            cache_creation_tokens=entry["tokens"]["cacheCreationTokens"],
-            cache_read_tokens=entry["tokens"]["cacheReadTokens"],
-            cost=entry["cost"],
-            models=tuple(entry["models"]),
-        )
-        for agent, entry in totals.items()
-        if agent != "all" and _SOURCE_ID.fullmatch(agent)
-    )
-    return tuple(sorted(usage, key=lambda item: (-item.total_tokens, item.source)))
-
-
-class AIUsageProvider(Protocol):
-    def available(self) -> bool: ...
-
-    def get_report(
-        self, report_type: str, source: str | None = None, *, by_agent: bool = False
-    ) -> AIUsageReport: ...
-
-    def get_detected_sources(self) -> tuple[str, ...]: ...
-
-
-class CCUsageAdapter:
-    """Execute ccusage with fixed argument arrays and read its JSON output."""
-
-    def __init__(self, timeout: float = 30.0) -> None:
-        self.timeout = timeout
-        self._launcher: tuple[str, ...] | None = None
-        self._checked = False
-
-    @property
-    def execution_method(self) -> str | None:
-        self.available()
-        return Path(self._launcher[0]).stem if self._launcher else None
-
-    def available(self) -> bool:
-        if not self._checked:
-            # .cmd launchers are the normal Windows entry points for npm tools.
-            for names, suffix in (
-                (("ccusage", "ccusage.cmd"), ()),
-                (("bunx", "bunx.cmd"), ("ccusage",)),
-                (("npx.cmd", "npx"), ("--yes", "ccusage@latest")),
-                (("pnpm.cmd", "pnpm"), ("dlx", "ccusage")),
-            ):
-                executable = next((path for name in names if (path := shutil.which(name))), None)
-                if executable:
-                    self._launcher = (executable, *suffix)
-                    break
-            self._checked = True
-        return self._launcher is not None
-
-    def retry_detection(self) -> None:
-        self._checked = False
-        self._launcher = None
-
-    def build_command(
-        self,
-        source: str | None = None,
-        report: str = "daily",
-        *,
-        by_agent: bool = False,
-        breakdown: bool = False,
-        since: str | None = None,
-        until: str | None = None,
-        last: int | None = None,
-    ) -> list[str]:
-        if report not in REPORT_TYPES:
-            raise AIUsageError("unsupported", f"Unsupported AI Usage report: {report}")
-        if source is not None and not _SOURCE_ID.fullmatch(source):
-            raise AIUsageError("unsupported", f"Unsupported AI Usage source: {source}")
-        if by_agent and (source is not None or report == "session"):
-            raise AIUsageError(
-                "unsupported", "Per-agent breakdown is only available for unified periods"
-            )
-        if last is not None and (last < 1 or since or until or report == "session"):
-            raise AIUsageError("unsupported", "Invalid recent-period filter")
-        for value in (since, until):
-            if value is not None and not re.fullmatch(r"\d{4}-?\d{2}-?\d{2}", value):
-                raise AIUsageError("unsupported", "Dates must be YYYYMMDD or YYYY-MM-DD")
-        if not self.available():
-            raise AIUsageError(
-                "unavailable", "ccusage is unavailable. Install ccusage, Bun, Node.js/npx, or pnpm."
-            )
-        assert self._launcher is not None
-        command = [*self._launcher]
-        if source:
-            command.append(source)
-        command.extend((report, "--json"))
-        if by_agent:
-            command.append("--by-agent")
-        if breakdown:
-            command.append("--breakdown")
-        if since:
-            command.extend(("--since", since))
-        if until:
-            command.extend(("--until", until))
-        if last is not None:
-            command.extend(("--last", str(last)))
-        return command
-
-    def get_report(
-        self, report_type: str, source: str | None = None, *, by_agent: bool = False
-    ) -> AIUsageReport:
-        command = self.build_command(source, report_type, by_agent=by_agent)
-        try:
-            completed = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                stdin=subprocess.DEVNULL,
-                timeout=self.timeout,
-                check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
-            logger.warning("ccusage timed out: %s", command)
-            raise AIUsageError(
-                "timeout",
-                f"ccusage did not finish within {self.timeout:.0f} s. Large agent histories "
-                "can take longer; raise ai_usage_timeout in config.toml, then press Refresh.",
-            ) from exc
-        except PermissionError as exc:
-            logger.warning("ccusage permission denied: %s", exc)
-            raise AIUsageError("permission", "Permission denied while starting ccusage.") from exc
-        except FileNotFoundError as exc:
-            self.retry_detection()
-            logger.warning("ccusage launcher disappeared: %s", exc)
-            raise AIUsageError(
-                "unavailable", "The ccusage launcher is no longer available."
-            ) from exc
-        except OSError as exc:
-            logger.warning("Could not start ccusage: %s", exc)
-            raise AIUsageError("runtime", "Could not start the ccusage runtime.") from exc
-        if completed.returncode:
-            logger.warning("ccusage exited %s: %s", completed.returncode, completed.stderr.strip())
-            raise AIUsageError(
-                "exit",
-                f"ccusage failed (exit {completed.returncode}). "
-                "Check its installation and local data access.",
-            )
-        try:
-            payload = json.loads(completed.stdout)
-        except json.JSONDecodeError as exc:
-            logger.warning("ccusage returned malformed JSON: %s", exc)
-            raise AIUsageError(
-                "json", "ccusage returned invalid JSON. Try updating ccusage."
-            ) from exc
-        if not isinstance(payload, dict):
-            raise AIUsageError("json", "ccusage returned an unexpected JSON shape.")
-        data = payload.get(report_type)
-        if data is None and report_type == "session":
-            data = payload.get("sessions")
-        if data is None:
-            data = payload.get("data")
-        if not isinstance(data, list):
-            raise AIUsageError("json", f"ccusage JSON has no {report_type} report rows.")
-        rows = tuple(row for row in data if isinstance(row, dict))
-        if len(rows) != len(data):
-            raise AIUsageError("json", "ccusage returned invalid report rows.")
-        totals = payload.get("totals", payload.get("summary", {}))
-        return AIUsageReport(
-            report_type, source, rows, totals if isinstance(totals, dict) else {}, payload
-        )
-
-    def get_detected_sources(self) -> tuple[str, ...]:
-        """Ask ccusage for its own per-agent breakdown; never scan agent logs."""
-        try:
-            report = self.get_report("daily", by_agent=True)
-        except AIUsageError as exc:
-            if exc.kind != "exit":
-                raise
-            # Older ccusage builds may not implement --by-agent. Unified
-            # sessions still identify each source without inspecting logs.
-            report = self.get_report("session")
-        return sources_in_report(report)
+__all__ = [
+    "BY_AGENT_REPORTS",
+    "REPORT_TYPES",
+    "SOURCE_NAMES",
+    "AIUsageError",
+    "AIUsageProvider",
+    "AIUsageReport",
+    "AIUsageService",
+    "CCUsageAdapter",
+    "SourceUsage",
+    "source_name",
+    "sources_in_report",
+    "usage_by_source",
+]
 
 
 class AIUsageService:
