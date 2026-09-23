@@ -31,16 +31,18 @@ from textual.binding import Binding, BindingType
 from textual.containers import Horizontal
 from textual.timer import Timer
 from textual.widgets import (
+    Button,
     ContentSwitcher,
     DataTable,
     Footer,
     Header,
     Input,
+    Select,
     Static,
 )
 
 from ..app.controller import MonitorController
-from ..app.state import VIEWS, AppState, Snapshot
+from ..app.state import AppState, Snapshot
 from ..config.settings import Settings
 from ..exporters import export
 from ..models import PortInfo, ProcessInfo
@@ -48,15 +50,10 @@ from ..services import network_service
 from ..services.ai_usage import AIUsageService, CCUsageAdapter
 from ..services.termination_service import TerminationPlan, TerminationResult
 from ..utils.formatting import format_clock
-from .ai_usage import AIUsagePane
-from .connections import ConnectionsPane
-from .dashboard import DashboardPane
-from .markdown_view import MarkdownPane
 from .pane import StandalonePane
 from .port_details import PortDetailsScreen
-from .ports import PortsPane
 from .process_details import ProcessDetailsScreen
-from .processes import ProcessesPane
+from .views import VIEW_IDS, VIEWS, key_help, view_spec
 from .widgets import ConfirmScreen, HelpScreen, StatusBar, TypedConfirmScreen
 
 logger = logging.getLogger(__name__)
@@ -74,12 +71,8 @@ class WinMonitorApp(App[None]):
     TITLE = "WinMonitor"
 
     BINDINGS: ClassVar[list[BindingType]] = [
-        Binding("s", "view('dashboard')", "System"),
-        Binding("p", "view('processes')", "Processes"),
-        Binding("o", "view('ports')", "Ports"),
-        Binding("c", "view('connections')", "Connections"),
-        Binding("a", "view('ai_usage')", "AI Usage"),
-        Binding("m", "view('markdown')", "Markdown"),
+        # One key per registered view; see ui/views.py.
+        *(Binding(spec.key, f"view('{spec.id}')", spec.label) for spec in VIEWS),
         Binding("d", "details", "Details"),
         Binding("slash", "search", "Search"),
         Binding("r", "refresh_now", "Refresh"),
@@ -88,8 +81,10 @@ class WinMonitorApp(App[None]):
         Binding("f", "force_kill", "Force kill"),
         Binding("question_mark", "help", "Help"),
         Binding("q", "quit", "Quit"),
-        Binding("tab", "next_view", "Next view", show=False),
-        Binding("shift+tab", "previous_view", "Previous view", show=False),
+        # priority: Textual's screen binds Tab to "focus next", which would
+        # otherwise win and Tab would never change the view.
+        Binding("tab", "next_view", "Next view", show=False, priority=True),
+        Binding("shift+tab", "previous_view", "Previous view", show=False, priority=True),
         Binding("n", "cycle_sort", "Sort", show=False),
         Binding("i", "reverse_sort", "Reverse sort", show=False),
         Binding("y", "toggle_system", "System processes", show=False),
@@ -108,29 +103,23 @@ class WinMonitorApp(App[None]):
         self._last_error: str | None = None
         # Replaceable before the app runs (the tests inject a fake provider);
         # the AI Usage pane receives it in compose().
-        self.ai_usage = AIUsageService(CCUsageAdapter(timeout=settings.ai_usage_timeout))
+        self.ai_usage: AIUsageService = AIUsageService(
+            CCUsageAdapter(timeout=settings.ai_usage_timeout)
+        )
 
     # -- layout ------------------------------------------------------------ #
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         yield Static("", id="navbar")
-        with ContentSwitcher(initial="dashboard", id="views"):
-            yield DashboardPane(id="dashboard")
-            yield ProcessesPane(id="processes")
-            yield PortsPane(id="ports")
-            yield ConnectionsPane(id="connections")
-            yield AIUsagePane(self.ai_usage, id="ai_usage")
-            yield MarkdownPane(self._markdown_roots(), id="markdown")
+        with ContentSwitcher(initial=VIEWS[0].id, id="views"):
+            for spec in VIEWS:
+                yield spec.create(self)
         with Horizontal(id="search-row", classes="hidden"):
             yield Static("Search:", id="search-label")
             yield Input(placeholder="name, PID, port or address", id="search")
         yield StatusBar(id="status")
         yield Footer()
-
-    def _markdown_roots(self) -> list[Path]:
-        """The working directory plus any configured ``markdown_roots``."""
-        return [Path.cwd(), *(Path(root) for root in self.settings.markdown_roots)]
 
     def on_mount(self) -> None:
         """Start the refresh loop and take the first reading immediately."""
@@ -148,7 +137,7 @@ class WinMonitorApp(App[None]):
 
     @property
     def switcher(self) -> ContentSwitcher:
-        """The container holding the four views."""
+        """The container holding one pane per registered view."""
         return self.query_one("#views", ContentSwitcher)
 
     def current_pane(self):
@@ -231,19 +220,11 @@ class WinMonitorApp(App[None]):
 
     def _render_navbar(self) -> None:
         """Draw the view tabs and the administrator indicator."""
-        labels = {
-            "dashboard": "S:System",
-            "processes": "P:Processes",
-            "ports": "O:Ports",
-            "connections": "C:Connections",
-            "ai_usage": "A:AI Usage",
-            "markdown": "M:Markdown",
-        }
         text = Text()
-        for view in VIEWS:
-            active = view == self.state.view
+        for spec in VIEWS:
+            active = spec.id == self.state.view
             text.append(
-                f" {labels[view]} ",
+                f" {spec.navbar_label} ",
                 style="bold reverse" if active else "dim",
             )
             text.append(" ")
@@ -325,7 +306,7 @@ class WinMonitorApp(App[None]):
 
     def action_view(self, view: str) -> None:
         """Switch to ``view``."""
-        if view not in VIEWS:
+        if view not in VIEW_IDS:
             return
         self.state.view = view
         self.switcher.current = view
@@ -338,13 +319,23 @@ class WinMonitorApp(App[None]):
 
     def action_next_view(self) -> None:
         """Move to the next view, wrapping around."""
-        index = VIEWS.index(self.state.view)
-        self.action_view(VIEWS[(index + 1) % len(VIEWS)])
+        if self._typing_in_field():
+            self.screen.focus_next()
+            return
+        index = VIEW_IDS.index(self.state.view)
+        self.action_view(VIEW_IDS[(index + 1) % len(VIEW_IDS)])
 
     def action_previous_view(self) -> None:
         """Move to the previous view, wrapping around."""
-        index = VIEWS.index(self.state.view)
-        self.action_view(VIEWS[(index - 1) % len(VIEWS)])
+        if self._typing_in_field():
+            self.screen.focus_previous()
+            return
+        index = VIEW_IDS.index(self.state.view)
+        self.action_view(VIEW_IDS[(index - 1) % len(VIEW_IDS)])
+
+    def _typing_in_field(self) -> bool:
+        """In a form field, Tab keeps its usual job of moving between fields."""
+        return isinstance(self.focused, (Input, Select, Button))
 
     def action_refresh_now(self) -> None:
         """Collect immediately instead of waiting for the next tick."""
@@ -414,8 +405,9 @@ class WinMonitorApp(App[None]):
             if not pane.focus_search():
                 self.status.set_message(pane.SEARCH_HINT, "information")
             return
-        if self.state.view == "dashboard":
-            self.action_view("processes")
+        redirect = view_spec(self.state.view).search_redirect
+        if redirect is not None:
+            self.action_view(redirect)
         row = self.query_one("#search-row")
         row.remove_class("hidden")
         search = self.query_one("#search", Input)
@@ -537,7 +529,7 @@ class WinMonitorApp(App[None]):
     async def _help_flow(self) -> None:
         self._dialog_open = True
         try:
-            await self.push_screen_wait(HelpScreen())
+            await self.push_screen_wait(HelpScreen(key_help()))
         finally:
             self._dialog_open = False
 

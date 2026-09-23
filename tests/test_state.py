@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from winmonitor.app.state import VIEWS, AppState, Snapshot
+from winmonitor.app.state import AppState, Snapshot
 from winmonitor.config.settings import Settings
 from winmonitor.models import ProcessSort
 
@@ -120,16 +120,6 @@ class TestConstruction:
         assert state.visible_ports() == []
         assert state.visible_connections() == []
         assert state.developer_ports() == []
-
-    def test_views_include_ai_usage(self):
-        assert VIEWS == (
-            "dashboard",
-            "processes",
-            "ports",
-            "connections",
-            "ai_usage",
-            "markdown",
-        )
 
 
 class TestSnapshot:

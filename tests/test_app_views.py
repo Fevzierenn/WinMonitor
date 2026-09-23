@@ -116,11 +116,6 @@ def port_key(app, number: int, *, listening: bool = True) -> str:
 ORDER = ["dashboard", "processes", "ports", "connections", "ai_usage", "markdown"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Pre-existing bug: Textual's screen-level Tab (focus next) wins over the app's "
-    "next-view binding, so the documented Tab navigation never fires.",
-)
 @pytest.mark.asyncio
 async def test_tab_cycles_every_view_in_order_and_wraps(make_app):
     app = make_app()
@@ -134,6 +129,30 @@ async def test_tab_cycles_every_view_in_order_and_wraps(make_app):
         await pilot.press("shift+tab")
         assert app.state.view == "markdown"
         assert app.switcher.current == "markdown"
+
+
+@pytest.mark.asyncio
+async def test_tab_moves_between_fields_while_typing(make_app):
+    app = make_app()
+    async with app.run_test(size=(140, 45)) as pilot:
+        await settle(app, pilot)
+        await pilot.press("a")
+        await settle(app, pilot)
+        app.query_one("#ai-source").focus()
+        await pilot.pause()
+        await pilot.press("tab")
+        # Inside the filter row Tab steps to the next field, not the next view.
+        assert app.focused is app.query_one("#ai-report")
+        assert app.state.view == "ai_usage"
+
+
+def test_registry_is_the_single_source_of_views():
+    from winmonitor.ui.views import VIEW_IDS, VIEWS, key_help
+
+    assert list(VIEW_IDS) == ORDER
+    assert len({spec.key for spec in VIEWS}) == len(VIEWS)
+    help_keys = [key for key, _ in key_help()]
+    assert all(spec.key in help_keys for spec in VIEWS)
 
 
 @pytest.mark.asyncio

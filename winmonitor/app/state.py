@@ -18,17 +18,8 @@ from ..services import network_service, process_service
 
 __all__ = ["AppState", "Snapshot", "View"]
 
-#: The screens the UI can show, in navigation order.
+#: A view id. The list of views and their order live in ``ui/views.py``.
 View = str
-
-VIEWS: tuple[str, ...] = (
-    "dashboard",
-    "processes",
-    "ports",
-    "connections",
-    "ai_usage",
-    "markdown",
-)
 
 
 @dataclass(slots=True)

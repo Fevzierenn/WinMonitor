@@ -632,12 +632,12 @@ def cmd_config(
 @app.command("keys")
 def cmd_keys() -> None:
     """Show the keyboard shortcuts used by the live interface."""
-    from .ui.widgets import KEY_HELP
+    from .ui.views import key_help
 
     table = Table(title="Keyboard shortcuts")
     table.add_column("KEY", style="cyan")
     table.add_column("ACTION")
-    for key, description in KEY_HELP:
+    for key, description in key_help():
         table.add_row(key, description)
     console.print(table)
 

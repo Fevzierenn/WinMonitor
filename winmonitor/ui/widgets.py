@@ -13,6 +13,7 @@ process called ``[bold red]x`` reformat the interface.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import ClassVar
 
 from rich.text import Text
@@ -280,17 +281,16 @@ class TypedConfirmScreen(ModalScreen[bool]):
         self.dismiss(False)
 
 
-#: Keyboard reference, rendered by :class:`HelpScreen` and by ``winmonitor keys``.
-KEY_HELP: tuple[tuple[str, str], ...] = (
+#: Keys that are not tied to one view. :func:`winmonitor.ui.views.key_help`
+#: puts one line per registered view between these two groups, and that full
+#: list is what :class:`HelpScreen` and ``winmonitor keys`` show.
+NAVIGATION_KEYS: tuple[tuple[str, str], ...] = (
     ("up / down", "Move the cursor"),
     ("enter", "Open details for the selected row"),
-    ("tab / shift+tab", "Next / previous view"),
-    ("s", "Dashboard (system)"),
-    ("p", "Processes"),
-    ("o", "Ports"),
-    ("c", "Connections"),
-    ("a", "AI Usage (per-source tokens, cost, report filters)"),
-    ("m", "Markdown reader (project docs and AI agent instruction files)"),
+    ("tab / shift+tab", "Next / previous view (moves between fields while typing)"),
+)
+
+ACTION_KEYS: tuple[tuple[str, str], ...] = (
     ("d", "Details for the selected row"),
     ("/", "Search in the current view (filters files in Markdown)"),
     ("escape", "Close the search, dialog or details screen"),
@@ -315,6 +315,10 @@ class HelpScreen(ModalScreen[None]):
         Binding("escape,q,question_mark", "dismiss_help", "Close", show=False)
     ]
 
+    def __init__(self, keys: Sequence[tuple[str, str]]) -> None:
+        super().__init__()
+        self._keys = keys
+
     def compose(self) -> ComposeResult:
         with Container(id="dialog", classes="help"):
             yield Label("WinMonitor - keyboard shortcuts", id="dialog-question")
@@ -331,10 +335,9 @@ class HelpScreen(ModalScreen[None]):
                 )
             yield Button("[Esc] Close", variant="primary", id="close")
 
-    @staticmethod
-    def _render_keys() -> Text:
+    def _render_keys(self) -> Text:
         text = Text()
-        for key, description in KEY_HELP:
+        for key, description in self._keys:
             text.append(f"  {key:<18}", style="bold cyan")
             text.append(f"{description}\n")
         return text
