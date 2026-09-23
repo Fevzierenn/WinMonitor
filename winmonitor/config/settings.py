@@ -84,6 +84,16 @@ class Settings(BaseModel):
     # -- interface --------------------------------------------------------- #
     theme: str = Field(default="default", description="Colour theme name")
     show_developer_ports: bool = Field(default=True, description="Show the developer ports panel")
+    ai_usage_timeout: float = Field(
+        default=180.0,
+        ge=10.0,
+        le=900.0,
+        description="Seconds to wait for one ccusage report; large agent histories take a minute",
+    )
+    markdown_roots: list[str] = Field(
+        default_factory=list,
+        description="Extra folders or files the Markdown view lists besides the working directory",
+    )
 
     # -- logging ----------------------------------------------------------- #
     log_level: str = Field(default="INFO")
@@ -218,6 +228,14 @@ enable_debug_privilege = {str(defaults.enable_debug_privilege).lower()}
 # Interface.
 theme = "{defaults.theme}"
 show_developer_ports = {str(defaults.show_developer_ports).lower()}
+
+# AI Usage (A): seconds to wait for one ccusage report. ccusage reads every
+# local agent log on each run, so a long history can take a minute or more.
+ai_usage_timeout = {defaults.ai_usage_timeout}
+
+# Markdown view (M): the working directory is always listed, along with the
+# per-user CLAUDE.md / AGENTS.md / GEMINI.md files. Add more folders here.
+# markdown_roots = ["C:/Users/you/notes"]
 
 # Logging: DEBUG, INFO, WARNING, ERROR, CRITICAL.
 log_level = "{defaults.log_level}"

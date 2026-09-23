@@ -32,7 +32,7 @@ from .services import network_service, process_service
 from .services.termination_service import CONFIRMATION_WORD, FORCE_WARNINGS, TerminationPlan
 from .ui.port_details import render_port_details
 from .ui.process_details import render_process_details
-from .utils.formatting import bar, format_bytes, format_percent, truncate
+from .utils.formatting import bar, format_bytes, format_percent, format_timestamp, truncate
 from .utils.permissions import elevation_instructions
 from .utils.windows import enable_virtual_terminal_processing
 
@@ -642,6 +642,57 @@ def cmd_keys() -> None:
     console.print(table)
 
 
+@app.command("md")
+def cmd_markdown(
+    path: Annotated[
+        Path | None,
+        typer.Argument(help="A Markdown file to render. Omit it to list the files found."),
+    ] = None,
+) -> None:
+    """Render a Markdown file, or list the Markdown files the M view shows."""
+    from rich.markdown import Markdown
+
+    from .services.markdown_service import (
+        MAX_BYTES,
+        MarkdownError,
+        discover,
+        read_markdown,
+        user_agent_files,
+    )
+
+    if path is not None:
+        try:
+            content = read_markdown(path)
+        except MarkdownError as exc:
+            error_console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=1) from None
+        console.print(Markdown(content.text))
+        if content.truncated:
+            console.print(f"\n[yellow]Showing the first {format_bytes(MAX_BYTES)} only.[/yellow]")
+        return
+
+    roots = [Path.cwd(), *(Path(root) for root in _settings.markdown_roots)]
+    documents = discover(roots, extra_files=user_agent_files())
+    if not documents:
+        console.print("[yellow]No Markdown files found.[/yellow]")
+        console.print("[dim]Add folders with markdown_roots in config.toml.[/dim]")
+        raise typer.Exit(code=1)
+    table = Table(title=f"{len(documents)} Markdown file(s)")
+    table.add_column("FILE")
+    table.add_column("AGENT", style="cyan")
+    table.add_column("SIZE", justify="right")
+    table.add_column("MODIFIED", style="dim")
+    for doc in documents:
+        table.add_row(
+            doc.label,
+            doc.agent or "",
+            format_bytes(doc.size),
+            format_timestamp(doc.modified, "%Y-%m-%d %H:%M"),
+        )
+    console.print(table)
+    console.print("[dim]Render one with: winmonitor md <file>[/dim]")
+
+
 @app.command("doctor")
 def cmd_doctor(
     test_ai_usage: Annotated[
@@ -687,7 +738,7 @@ def cmd_doctor(
     )
     rows.append(("Refresh duration", snapshot.duration < 1.0, f"{snapshot.duration * 1000:.0f} ms"))
 
-    ai_provider = CCUsageAdapter()
+    ai_provider = CCUsageAdapter(timeout=_settings.ai_usage_timeout)
     ai_available = ai_provider.available()
     rows.append(("AI Usage provider", ai_available, "ccusage"))
     rows.append(

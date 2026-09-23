@@ -8,6 +8,8 @@ from winmonitor.utils.formatting import (
     bar,
     format_bytes,
     format_clock,
+    format_compact,
+    format_cost,
     format_endpoint,
     format_human_duration,
     format_percent,
@@ -140,3 +142,38 @@ def test_timestamp_round_trip():
     assert format_timestamp(None) == "-"
     # A value far outside the representable range must not raise.
     assert format_timestamp(1e30) == "-"
+
+
+class TestFormatCompact:
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            (None, "-"),
+            (0, "0"),
+            (999, "999"),
+            (1_500, "1.5K"),
+            (227_689_460, "227.7M"),
+            (3_000_000_000, "3.0B"),
+            (2e12, "2.0T"),
+        ],
+    )
+    def test_values(self, value, expected):
+        assert format_compact(value) == expected
+
+
+class TestFormatCost:
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            (None, "-"),
+            (True, "-"),
+            (0, "$0.00"),
+            (33.299283500000016, "$33.30"),
+            (1234.5, "$1,234.50"),
+            (0.004, "$0.0040"),
+            ("0.5", "$0.50"),
+            ("n/a", "n/a"),
+        ],
+    )
+    def test_values(self, value, expected):
+        assert format_cost(value) == expected

@@ -16,8 +16,14 @@ from winmonitor.services.ai_usage import (
     AIUsageService,
     CCUsageAdapter,
     source_name,
+    usage_by_source,
 )
-from winmonitor.ui.ai_usage import display_date, report_cell, report_columns
+from winmonitor.ui.ai_usage import (
+    display_date,
+    render_source_usage,
+    report_cell,
+    report_columns,
+)
 from winmonitor.ui.app import WinMonitorApp
 
 
@@ -257,9 +263,13 @@ def test_first_unified_load_discovers_sources_without_a_second_query():
     report, sources = service.load_report("daily")
     assert report.report_type == "daily"
     assert sources == ("claude",)
-    assert provider.calls == [(None, "daily", False)]
+    # Unified periods ask for the per-agent breakdown in the same single query.
+    assert provider.calls == [(None, "daily", True)]
     service.load_report("monthly")
-    assert provider.calls[-1] == (None, "monthly", False)
+    assert provider.calls[-1] == (None, "monthly", True)
+    # Sessions have no --by-agent; the row's own agent field identifies them.
+    service.load_report("session")
+    assert provider.calls[-1] == (None, "session", False)
 
 
 def test_service_caches_each_filter_pair():
@@ -429,3 +439,236 @@ async def test_loading_hides_and_disables_clickable_rows(monkeypatch):
             assert app.is_running
     finally:
         release.set()
+
+
+# --------------------------------------------------------------------------- #
+# Per-source breakdown
+# --------------------------------------------------------------------------- #
+
+
+def _by_agent_row(period, *agents):
+    """A unified row shaped like ccusage 20.x ``daily --json --by-agent``."""
+    return {
+        "period": period,
+        "agent": "all",
+        "agents": [
+            {
+                "agent": agent,
+                "inputTokens": tokens,
+                "outputTokens": 0,
+                "totalTokens": tokens,
+                "totalCost": cost,
+                "modelsUsed": [model],
+            }
+            for agent, tokens, cost, model in agents
+        ],
+        "totalTokens": sum(item[1] for item in agents),
+    }
+
+
+def test_usage_by_source_sums_every_period_largest_first():
+    report = AIUsageReport(
+        "daily",
+        None,
+        (
+            _by_agent_row("2026-09-20", ("claude", 100, 1.5, "opus"), ("codex", 50, 0.25, "gpt")),
+            _by_agent_row("2026-09-21", ("codex", 300, 0.75, "gpt-mini"), ("gemini", 5, None, "g")),
+        ),
+        {},
+        {},
+    )
+    usage = usage_by_source(report)
+    assert [item.source for item in usage] == ["codex", "claude", "gemini"]
+    codex = usage[0]
+    assert codex.total_tokens == 350
+    assert codex.cost == pytest.approx(1.0)
+    assert codex.models == ("gpt", "gpt-mini")
+    assert codex.name == "Codex"
+    # A source that reported no cost stays "unknown", not $0.
+    assert usage[2].cost is None
+
+
+def test_usage_by_source_uses_row_agents_and_the_source_filter():
+    sessions = AIUsageReport(
+        "session",
+        None,
+        (
+            {"sessionId": "a", "agent": "claude", "inputTokens": 3, "outputTokens": 4},
+            {"sessionId": "b", "agent": "claude", "totalTokens": 10, "costUSD": 0.5},
+        ),
+        {},
+        {},
+    )
+    (claude,) = usage_by_source(sessions)
+    # Without totalTokens the four token kinds are summed.
+    assert claude.total_tokens == 17
+    assert claude.input_tokens == 3
+    single = AIUsageReport("daily", "codex", ({"date": "x", "totalTokens": 9},), {}, {})
+    assert [(item.source, item.total_tokens) for item in usage_by_source(single)] == [("codex", 9)]
+
+
+def test_usage_by_source_is_empty_when_rows_cannot_be_attributed():
+    report = AIUsageReport(
+        "daily", None, ({"period": "x", "agent": "all", "totalTokens": 5, "flag": True},), {}, {}
+    )
+    assert usage_by_source(report) == ()
+
+
+def test_render_source_usage_shows_share_tokens_and_cost():
+    report = AIUsageReport(
+        "daily",
+        None,
+        (
+            _by_agent_row(
+                "2026-09-20", ("claude", 3_000_000, 12.3456, "opus"), ("amp", 1_000_000, 0.004, "m")
+            ),
+        ),
+        {},
+        {},
+    )
+    text = render_source_usage(usage_by_source(report)).plain
+    assert "BY SOURCE" in text
+    assert "Claude Code" in text and "75.0%" in text and "3.0M" in text and "$12.35" in text
+    assert "Amp" in text and "25.0%" in text and "$0.0040" in text
+
+
+# --------------------------------------------------------------------------- #
+# Service behaviour
+# --------------------------------------------------------------------------- #
+
+
+class _RecordingProvider:
+    def __init__(self, reject_by_agent=False):
+        self.calls = []
+        self.reject_by_agent = reject_by_agent
+
+    def available(self):
+        return True
+
+    def get_detected_sources(self):
+        return ("claude",)
+
+    def get_report(self, report_type, source=None, *, by_agent=False):
+        self.calls.append((source, report_type, by_agent))
+        if by_agent and self.reject_by_agent:
+            raise AIUsageError("exit", "unknown option --by-agent")
+        return AIUsageReport(report_type, source, (), {}, {})
+
+
+def test_cache_keeps_breakdown_and_plain_reports_apart():
+    provider = _RecordingProvider()
+    service = AIUsageService(provider)
+    service.get_report("daily", by_agent=True)
+    service.get_report("daily")
+    service.get_report("daily", by_agent=True)
+    assert provider.calls == [(None, "daily", True), (None, "daily", False)]
+
+
+def test_older_ccusage_without_by_agent_falls_back_once():
+    provider = _RecordingProvider(reject_by_agent=True)
+    service = AIUsageService(provider)
+    service.load_report("daily")
+    assert provider.calls == [(None, "daily", True), (None, "daily", False)]
+    # The rejection is remembered: the next period costs a single query.
+    service.load_report("weekly")
+    assert provider.calls[-1] == (None, "weekly", False)
+    assert len(provider.calls) == 3
+
+
+def test_source_cache_honours_the_configured_ttl():
+    class CountingProvider(_RecordingProvider):
+        discoveries = 0
+
+        def get_detected_sources(self):
+            self.discoveries += 1
+            return ("claude",)
+
+    provider = CountingProvider()
+    service = AIUsageService(provider, ttl=0)
+    service.get_detected_sources()
+    service.get_detected_sources()
+    assert provider.discoveries == 2
+
+
+def test_cost_is_rounded_and_numbers_are_right_aligned():
+    row = {"totalCost": 33.299283500000016, "costUSD": 0.00012, "totalTokens": 46873601}
+    cost = report_cell(row, "totalCost")
+    assert cost.plain == "$33.30"
+    assert cost.justify == "right"
+    assert report_cell(row, "costUSD").plain == "$0.0001"
+    assert report_cell(row, "totalTokens").plain == "46,873,601"
+    # The JSON value itself is left exactly as ccusage wrote it.
+    assert row["totalCost"] == 33.299283500000016
+
+
+@pytest.mark.asyncio
+async def test_ui_shows_per_source_breakdown_for_all_sources(monkeypatch):
+    class BreakdownProvider(_RecordingProvider):
+        def get_report(self, report_type, source=None, *, by_agent=False):
+            self.calls.append((source, report_type, by_agent))
+            if source is None:
+                rows = (
+                    _by_agent_row(
+                        "2026-09-20", ("claude", 900, 9.0, "opus"), ("codex", 100, 1.0, "gpt")
+                    ),
+                )
+            else:
+                rows = ({"period": "2026-09-20", "agent": source, "totalTokens": 900},)
+            return AIUsageReport(report_type, source, rows, {"totalCost": 10.004}, {})
+
+    provider = BreakdownProvider()
+    monkeypatch.setattr(WinMonitorApp, "_collect", lambda self: None)
+    app = WinMonitorApp(Settings())
+    app.ai_usage = AIUsageService(provider)
+    async with app.run_test(size=(140, 45)) as pilot:
+        app.action_view("ai_usage")
+        await pilot.pause(0.1)
+        panel = app.query_one("#ai-sources", Static)
+        assert not panel.has_class("hidden")
+        rendered = str(panel.render())
+        assert "Claude Code" in rendered and "Codex" in rendered and "90.0%" in rendered
+        assert "$10.00" in str(app.query_one("#ai-totals", Static).render())
+        # Both detected sources become filter options from the same query.
+        assert provider.calls == [(None, "daily", True)]
+        # A single source makes the breakdown redundant, so it is hidden.
+        app.query_one("#ai-source", Select).value = "claude"
+        await pilot.pause(0.4)
+        assert provider.calls[-1] == ("claude", "daily", False)
+        assert panel.has_class("hidden")
+
+
+@pytest.mark.asyncio
+async def test_refresh_key_reloads_the_ai_report(monkeypatch):
+    provider = _RecordingProvider()
+    monkeypatch.setattr(WinMonitorApp, "_collect", lambda self: None)
+    app = WinMonitorApp(Settings())
+    app.ai_usage = AIUsageService(provider)
+    async with app.run_test(size=(120, 40)) as pilot:
+        app.action_view("ai_usage")
+        await pilot.pause(0.1)
+        calls = len(provider.calls)
+        await pilot.press("r")
+        await pilot.pause(0.1)
+        # Refresh bypasses the cache even though the filters are unchanged.
+        assert len(provider.calls) == calls + 1
+        app.action_search()
+        assert "Source and Report filters" in str(app.status.render())
+
+
+def test_timeout_is_configurable_and_explained(monkeypatch):
+    # Measured on a real machine: one full-history ccusage report took ~50 s,
+    # so the old fixed 30 s limit failed every load there.
+    assert Settings().ai_usage_timeout >= 120
+    app = WinMonitorApp(Settings(ai_usage_timeout=42))
+    assert app.ai_usage.provider.timeout == 42
+    monkeypatch.setattr(
+        "winmonitor.services.ai_usage.shutil.which",
+        lambda name: "ccusage" if name == "ccusage" else None,
+    )
+
+    def time_out(*args, **kwargs):
+        raise subprocess.TimeoutExpired(["ccusage"], 42)
+
+    monkeypatch.setattr("winmonitor.services.ai_usage.subprocess.run", time_out)
+    with pytest.raises(AIUsageError, match="ai_usage_timeout"):
+        CCUsageAdapter(timeout=42).get_report("daily")

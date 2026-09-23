@@ -122,7 +122,14 @@ class TestConstruction:
         assert state.developer_ports() == []
 
     def test_views_include_ai_usage(self):
-        assert VIEWS == ("dashboard", "processes", "ports", "connections", "ai_usage")
+        assert VIEWS == (
+            "dashboard",
+            "processes",
+            "ports",
+            "connections",
+            "ai_usage",
+            "markdown",
+        )
 
 
 class TestSnapshot:

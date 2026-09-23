@@ -16,14 +16,32 @@ from typing import Any, Protocol
 logger = logging.getLogger(__name__)
 
 REPORT_TYPES = ("daily", "weekly", "monthly", "session")
+#: Display names for the agents ccusage 20.x reports. Anything missing here is
+#: still shown, title-cased, by :func:`source_name`.
 SOURCE_NAMES = {
     "claude": "Claude Code",
     "codex": "Codex",
     "opencode": "OpenCode",
     "gemini": "Gemini CLI",
     "copilot": "Copilot CLI",
+    "amp": "Amp",
+    "droid": "Droid",
+    "codebuff": "Codebuff",
+    "hermes": "Hermes",
+    "pi": "pi-agent",
+    "goose": "Goose",
+    "kilo": "Kilo",
+    "antigravity": "Antigravity",
+    "kimi": "Kimi",
+    "qwen": "Qwen",
+    "openclaw": "OpenClaw",
+    "grok": "Grok Build CLI",
+    "zcode": "ZCode",
 }
 _SOURCE_ID = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_-]*\Z")
+#: Report types for which ccusage accepts ``--by-agent``.
+BY_AGENT_REPORTS = frozenset({"daily", "weekly", "monthly"})
+_TOKEN_KEYS = ("inputTokens", "outputTokens", "cacheCreationTokens", "cacheReadTokens")
 
 
 def source_name(source: str) -> str:
@@ -65,6 +83,87 @@ def sources_in_report(report: AIUsageReport) -> tuple[str, ...]:
         if isinstance(row.get("agent"), str):
             found.add(row["agent"])
     return tuple(sorted(item for item in found if item != "all" and _SOURCE_ID.fullmatch(item)))
+
+
+@dataclass(frozen=True)
+class SourceUsage:
+    """Token and estimated-cost totals for one agent across a whole report."""
+
+    source: str
+    total_tokens: int
+    input_tokens: int
+    output_tokens: int
+    cache_creation_tokens: int
+    cache_read_tokens: int
+    cost: float | None
+    models: tuple[str, ...]
+
+    @property
+    def name(self) -> str:
+        return source_name(self.source)
+
+
+def _number(value: Any) -> float | None:
+    # bool is an int subclass; a stray true/false must not count as a token.
+    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def usage_by_source(report: AIUsageReport) -> tuple[SourceUsage, ...]:
+    """Sum each agent's usage over every row of ``report``, largest first.
+
+    Rows are attributed from ccusage's own JSON only: the ``agents`` list that
+    ``--by-agent`` adds to unified rows, a row's ``agent`` field (sessions and
+    single-source reports), or the report's source filter. A unified row with
+    none of those cannot be split, so an empty tuple means "no breakdown", not
+    "no usage".
+    """
+    totals: dict[str, dict[str, Any]] = {}
+
+    def add(agent: str, row: dict[str, Any]) -> None:
+        entry = totals.setdefault(
+            agent, {"tokens": dict.fromkeys(_TOKEN_KEYS, 0), "total": 0, "cost": None, "models": {}}
+        )
+        parts = {key: int(_number(row.get(key)) or 0) for key in _TOKEN_KEYS}
+        for key, value in parts.items():
+            entry["tokens"][key] += value
+        total = _number(row.get("totalTokens"))
+        entry["total"] += int(total) if total is not None else sum(parts.values())
+        # Agents and ccusage versions disagree on the cost field's name.
+        for key in ("totalCost", "costUSD", "cost"):
+            cost = _number(row.get(key))
+            if cost is not None:
+                entry["cost"] = (entry["cost"] or 0.0) + cost
+                break
+        models = row.get("modelsUsed", row.get("models"))
+        if isinstance(models, (list, dict)):
+            # dict.fromkeys keeps first-seen order while de-duplicating.
+            entry["models"].update(dict.fromkeys(str(model) for model in models))
+
+    for row in report.rows:
+        agents = row.get("agents")
+        if isinstance(agents, list) and agents:
+            for item in agents:
+                if isinstance(item, dict) and isinstance(item.get("agent"), str):
+                    add(item["agent"], item)
+        elif isinstance(row.get("agent"), str) and row["agent"] != "all":
+            add(row["agent"], row)
+        elif report.source is not None:
+            add(report.source, row)
+    usage = (
+        SourceUsage(
+            source=agent,
+            total_tokens=entry["total"],
+            input_tokens=entry["tokens"]["inputTokens"],
+            output_tokens=entry["tokens"]["outputTokens"],
+            cache_creation_tokens=entry["tokens"]["cacheCreationTokens"],
+            cache_read_tokens=entry["tokens"]["cacheReadTokens"],
+            cost=entry["cost"],
+            models=tuple(entry["models"]),
+        )
+        for agent, entry in totals.items()
+        if agent != "all" and _SOURCE_ID.fullmatch(agent)
+    )
+    return tuple(sorted(usage, key=lambda item: (-item.total_tokens, item.source)))
 
 
 class AIUsageProvider(Protocol):
@@ -172,7 +271,11 @@ class CCUsageAdapter:
             )
         except subprocess.TimeoutExpired as exc:
             logger.warning("ccusage timed out: %s", command)
-            raise AIUsageError("timeout", "ccusage timed out. Try Refresh again.") from exc
+            raise AIUsageError(
+                "timeout",
+                f"ccusage did not finish within {self.timeout:.0f} s. Large agent histories "
+                "can take longer; raise ai_usage_timeout in config.toml, then press Refresh.",
+            ) from exc
         except PermissionError as exc:
             logger.warning("ccusage permission denied: %s", exc)
             raise AIUsageError("permission", "Permission denied while starting ccusage.") from exc
@@ -235,9 +338,16 @@ class AIUsageService:
     def __init__(self, provider: AIUsageProvider | None = None, ttl: float = 300.0) -> None:
         self.provider = provider or CCUsageAdapter()
         self.ttl = ttl
-        self._reports: dict[tuple[str | None, str], tuple[float, AIUsageReport]] = {}
+        # The key includes by_agent: the same period with and without the
+        # per-agent breakdown are different JSON documents.
+        self._reports: dict[tuple[str | None, str, bool], tuple[float, AIUsageReport]] = {}
         self._sources: tuple[float, tuple[str, ...]] | None = None
+        # None until a --by-agent query has succeeded or been rejected once.
+        self._by_agent_supported: bool | None = None
         self._lock = threading.RLock()
+
+    def _fresh(self, stamp: float) -> bool:
+        return time.monotonic() - stamp < self.ttl
 
     def get_report(
         self,
@@ -247,14 +357,31 @@ class AIUsageService:
         refresh: bool = False,
         by_agent: bool = False,
     ) -> AIUsageReport:
-        key = (source, report_type)
+        key = (source, report_type, by_agent)
         with self._lock:
             cached = self._reports.get(key)
-            if not refresh and cached and time.monotonic() - cached[0] < self.ttl:
+            if not refresh and cached and self._fresh(cached[0]):
                 return cached[1]
         report = self.provider.get_report(report_type, source, by_agent=by_agent)
         with self._lock:
             self._reports[key] = (time.monotonic(), report)
+        return report
+
+    def _get_unified_report(self, report_type: str, *, refresh: bool) -> AIUsageReport:
+        """A unified report with per-agent rows when this ccusage supports them."""
+        if report_type not in BY_AGENT_REPORTS or self._by_agent_supported is False:
+            return self.get_report(report_type, refresh=refresh)
+        try:
+            report = self.get_report(report_type, refresh=refresh, by_agent=True)
+        except AIUsageError as exc:
+            if exc.kind != "exit":
+                raise
+            # Older ccusage builds exit non-zero on the unknown flag; remember
+            # that so every later filter change costs one process, not two.
+            logger.info("ccusage rejected --by-agent; using unified totals only")
+            self._by_agent_supported = False
+            return self.get_report(report_type, refresh=refresh)
+        self._by_agent_supported = True
         return report
 
     def load_report(
@@ -265,10 +392,12 @@ class AIUsageService:
             self.provider.retry_detection()
         with self._lock:
             cached_sources = self._sources
-            sources_fresh = (
-                cached_sources is not None and time.monotonic() - cached_sources[0] < 300
-            )
-        report = self.get_report(report_type, source, refresh=refresh)
+            sources_fresh = cached_sources is not None and self._fresh(cached_sources[0])
+        report = (
+            self._get_unified_report(report_type, refresh=refresh)
+            if source is None
+            else self.get_report(report_type, source, refresh=refresh)
+        )
         if source is None:
             discovered = sources_in_report(report)
             if discovered or not report.rows:
@@ -287,7 +416,7 @@ class AIUsageService:
         if refresh and isinstance(self.provider, CCUsageAdapter):
             self.provider.retry_detection()
         with self._lock:
-            if not refresh and self._sources and time.monotonic() - self._sources[0] < 300:
+            if not refresh and self._sources and self._fresh(self._sources[0]):
                 return self._sources[1]
         sources = self.provider.get_detected_sources()
         with self._lock:

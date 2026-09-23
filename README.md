@@ -243,7 +243,19 @@ data; choose **All Sources** for a unified report. The Report selector switches
 between **Daily**, **Weekly**, **Monthly**, and **Session**. Press **R** or use
 **Refresh** to reload the selected report. WinMonitor does not parse the agents'
 logs itself or send usage data to a WinMonitor service. Which coding agents are
-supported depends on the installed ccusage version.
+supported depends on the installed ccusage version (ccusage 20 covers Claude
+Code, Codex, OpenCode, Gemini CLI, Copilot CLI, Amp, Antigravity, Qwen and more).
+
+With **All Sources** selected, a **BY SOURCE** summary above the table shows
+each detected tool's share of all tokens, its token count, estimated cost and
+models for the selected period. It comes from the same ccusage query
+(`--by-agent`), so it adds no extra run. Older ccusage builds without
+`--by-agent` still work, just without the summary.
+
+ccusage re-reads every local agent log on each run, so a long history can take
+a minute. The wait panel counts the seconds, and each report stays cached for
+five minutes. If loads time out, raise `ai_usage_timeout` (seconds, default
+180) in `config.toml`.
 
 WinMonitor looks for an installed `ccusage` first, then `bunx ccusage`,
 `npx ccusage@latest`, and `pnpm dlx ccusage`. Install one of these launchers
@@ -256,6 +268,30 @@ usage and model pricing. It may differ from actual subscription or billing
 charges. For direct access to the same source data, use commands such as
 `ccusage daily --json`, `ccusage weekly --json`, `ccusage monthly --json`,
 `ccusage session --json`, or `ccusage claude daily --json`.
+
+### Markdown reader
+
+Press **M** to read Markdown files without leaving WinMonitor. The left column
+lists the `.md` and `.markdown` files in the working directory (three levels
+deep, skipping `node_modules`, `build`, `dist`, virtual environments and hidden
+folders other than `.github` and `.claude`). It also lists your per-user agent
+instruction files: `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`,
+`~/.gemini/GEMINI.md`, `~/.qwen/QWEN.md` and `~/.config/opencode/AGENTS.md`.
+Agent instruction files are listed first and tagged **AI**.
+
+Press **/** to filter the list, **Enter** to open a file, and **R** to rescan.
+Relative links open the target file in place, `#anchor` links jump within the
+document, and web links open in your browser. Files over 1 MB are shown
+truncated. The reader never writes anything.
+
+To list more folders, add them to `config.toml`:
+
+```toml
+markdown_roots = ["C:/Users/you/notes"]
+```
+
+From the command line, `winmonitor md` lists the same files and
+`winmonitor md README.md` renders one in the terminal.
 
 ### Live interface
 
@@ -273,7 +309,8 @@ Use one key to switch between views:
 | `P` | Processes — running processes, sorted by CPU |
 | `O` | Ports — listening ports and their owners |
 | `C` | Connections — active TCP/UDP sockets |
-| `A` | AI Usage — Shows AI Usage using ccusage |
+| `A` | AI Usage — token usage and estimated cost per AI tool, via ccusage |
+| `M` | Markdown — project docs and AI agent instruction files |
 
 Navigation:
 
@@ -281,7 +318,7 @@ Navigation:
 |---|---|
 | `↑` `↓` | Move the cursor |
 | `Enter` | Show details for the selected row |
-| `/` | Search |
+| `/` | Search (filters the file list in Markdown) |
 | `Esc` | Close search or dialog |
 | `N` / `I` | Change sort column / reverse sort |
 | `R` | Refresh immediately |
@@ -315,6 +352,8 @@ winmonitor processes -n 20
 winmonitor connections
 winmonitor system
 winmonitor dev
+winmonitor md                 # list Markdown files
+winmonitor md README.md       # render one in the terminal
 ```
 
 Look up a port or process:

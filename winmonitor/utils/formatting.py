@@ -12,6 +12,8 @@ __all__ = [
     "bar",
     "format_bytes",
     "format_clock",
+    "format_compact",
+    "format_cost",
     "format_endpoint",
     "format_human_duration",
     "format_percent",
@@ -40,6 +42,35 @@ def format_bytes(value: float | int | None, precision: int = 1) -> str:
     if unit_index == 0:
         return f"{int(size)} {_BYTE_UNITS[0]}"
     return f"{size:.{precision}f} {_BYTE_UNITS[unit_index]}"
+
+
+def format_compact(value: float | int | None, precision: int = 1) -> str:
+    """Return a large count as e.g. ``227.7M``; small counts stay exact."""
+    if value is None:
+        return "-"
+    number = float(value)
+    for divisor, suffix in ((1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")):
+        if abs(number) >= divisor:
+            return f"{number / divisor:.{precision}f}{suffix}"
+    return f"{int(number):,}"
+
+
+def format_cost(value: object) -> str:
+    """Return a US dollar estimate as ``$1,234.57``.
+
+    Sub-cent amounts keep four decimals so a cheap session does not read as
+    free; ``-`` means the source reported no cost at all.  A value that is not
+    a number is shown as given rather than raising mid-render.
+    """
+    if value is None or isinstance(value, bool):
+        return "-"
+    try:
+        amount = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return str(value)
+    if 0 < abs(amount) < 0.01:
+        return f"${amount:.4f}"
+    return f"${amount:,.2f}"
 
 
 def format_rate(bytes_per_second: float | None, precision: int = 1) -> str:

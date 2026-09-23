@@ -31,13 +31,11 @@ from textual.binding import Binding, BindingType
 from textual.containers import Horizontal
 from textual.timer import Timer
 from textual.widgets import (
-    Button,
     ContentSwitcher,
     DataTable,
     Footer,
     Header,
     Input,
-    Select,
     Static,
 )
 
@@ -47,12 +45,14 @@ from ..config.settings import Settings
 from ..exporters import export
 from ..models import PortInfo, ProcessInfo
 from ..services import network_service
-from ..services.ai_usage import AIUsageError, AIUsageReport, AIUsageService
+from ..services.ai_usage import AIUsageService, CCUsageAdapter
 from ..services.termination_service import TerminationPlan, TerminationResult
 from ..utils.formatting import format_clock
 from .ai_usage import AIUsagePane
 from .connections import ConnectionsPane
 from .dashboard import DashboardPane
+from .markdown_view import MarkdownPane
+from .pane import StandalonePane
 from .port_details import PortDetailsScreen
 from .ports import PortsPane
 from .process_details import ProcessDetailsScreen
@@ -79,6 +79,7 @@ class WinMonitorApp(App[None]):
         Binding("o", "view('ports')", "Ports"),
         Binding("c", "view('connections')", "Connections"),
         Binding("a", "view('ai_usage')", "AI Usage"),
+        Binding("m", "view('markdown')", "Markdown"),
         Binding("d", "details", "Details"),
         Binding("slash", "search", "Search"),
         Binding("r", "refresh_now", "Refresh"),
@@ -105,11 +106,9 @@ class WinMonitorApp(App[None]):
         self._dialog_open = False
         self._refresh_timer: Timer | None = None
         self._last_error: str | None = None
-        self.ai_usage = AIUsageService()
-        self._ai_request = 0
-        self._ai_filters: tuple[str | None, str] | None = None
-        self._ai_load_timer: Timer | None = None
-        self._updating_ai_sources = False
+        # Replaceable before the app runs (the tests inject a fake provider);
+        # the AI Usage pane receives it in compose().
+        self.ai_usage = AIUsageService(CCUsageAdapter(timeout=settings.ai_usage_timeout))
 
     # -- layout ------------------------------------------------------------ #
 
@@ -121,12 +120,17 @@ class WinMonitorApp(App[None]):
             yield ProcessesPane(id="processes")
             yield PortsPane(id="ports")
             yield ConnectionsPane(id="connections")
-            yield AIUsagePane(id="ai_usage")
+            yield AIUsagePane(self.ai_usage, id="ai_usage")
+            yield MarkdownPane(self._markdown_roots(), id="markdown")
         with Horizontal(id="search-row", classes="hidden"):
             yield Static("Search:", id="search-label")
             yield Input(placeholder="name, PID, port or address", id="search")
         yield StatusBar(id="status")
         yield Footer()
+
+    def _markdown_roots(self) -> list[Path]:
+        """The working directory plus any configured ``markdown_roots``."""
+        return [Path.cwd(), *(Path(root) for root in self.settings.markdown_roots)]
 
     def on_mount(self) -> None:
         """Start the refresh loop and take the first reading immediately."""
@@ -150,6 +154,11 @@ class WinMonitorApp(App[None]):
     def current_pane(self):
         """The pane the user is currently looking at."""
         return self.query_one(f"#{self.state.view}")
+
+    def _standalone_pane(self) -> StandalonePane | None:
+        """The current pane when it loads its own data (AI Usage, Markdown)."""
+        pane = self.current_pane()
+        return pane if isinstance(pane, StandalonePane) else None
 
     # -- collection -------------------------------------------------------- #
 
@@ -228,6 +237,7 @@ class WinMonitorApp(App[None]):
             "ports": "O:Ports",
             "connections": "C:Connections",
             "ai_usage": "A:AI Usage",
+            "markdown": "M:Markdown",
         }
         text = Text()
         for view in VIEWS:
@@ -264,13 +274,13 @@ class WinMonitorApp(App[None]):
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         """Track the cursor so kill and details know what they act on."""
-        if event.data_table.id == "ai-table" or self.state.view == "ai_usage":
+        if self._standalone_pane() is not None or event.data_table.id == "ai-table":
             return
         self._remember_selection(event.row_key.value if event.row_key else None)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Enter on a row opens the matching details screen."""
-        if event.data_table.id == "ai-table" or self.state.view == "ai_usage":
+        if self._standalone_pane() is not None or event.data_table.id == "ai-table":
             return
         self._remember_selection(event.row_key.value if event.row_key else None)
         self.action_details()
@@ -322,8 +332,9 @@ class WinMonitorApp(App[None]):
         self._refresh_pane()
         self._render_navbar()
         self._sync_search_box()
-        if view == "ai_usage":
-            self._request_ai_report()
+        pane = self._standalone_pane()
+        if pane is not None:
+            pane.activate()
 
     def action_next_view(self) -> None:
         """Move to the next view, wrapping around."""
@@ -337,91 +348,12 @@ class WinMonitorApp(App[None]):
 
     def action_refresh_now(self) -> None:
         """Collect immediately instead of waiting for the next tick."""
-        if self.state.view == "ai_usage":
-            self._request_ai_report(refresh=True)
+        pane = self._standalone_pane()
+        if pane is not None:
+            pane.refresh_now()
             return
         self.status.set_message("Refreshing...", "information")
         self._collect()
-
-    def on_select_changed(self, event: Select.Changed) -> None:
-        if (
-            event.select.id in ("ai-source", "ai-report")
-            and not self._updating_ai_sources
-            and self.state.view == "ai_usage"
-        ):
-            pane = self.query_one("#ai_usage", AIUsagePane)
-            if (pane.source, pane.report_type) != self._ai_filters:
-                self._request_ai_report(debounce=True)
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "ai-refresh":
-            self._request_ai_report(refresh=True)
-
-    def _request_ai_report(self, *, refresh: bool = False, debounce: bool = False) -> None:
-        pane = self.query_one("#ai_usage", AIUsagePane)
-        if (
-            not refresh
-            and pane.has_class("loading")
-            and self._ai_filters == (pane.source, pane.report_type)
-        ):
-            return
-        if self._ai_load_timer is not None:
-            self._ai_load_timer.stop()
-            self._ai_load_timer = None
-        self._ai_request += 1
-        self._ai_filters = (pane.source, pane.report_type)
-        pane.begin_loading()
-        request, source, report_type = self._ai_request, pane.source, pane.report_type
-        if debounce:
-            self._ai_load_timer = self.set_timer(
-                0.2,
-                lambda: self._load_ai_report(request, source, report_type, refresh),
-            )
-        else:
-            self._load_ai_report(request, source, report_type, refresh)
-
-    @work(thread=True, group="ai-usage")
-    def _load_ai_report(
-        self, request: int, source: str | None, report_type: str, refresh: bool
-    ) -> None:
-        try:
-            report, sources = self.ai_usage.load_report(report_type, source, refresh=refresh)
-        except AIUsageError as exc:
-            self.call_from_thread(self._on_ai_error, request, None, exc)
-            return
-        self.call_from_thread(self._on_ai_report, request, sources, report)
-
-    def _set_ai_sources(self, sources: tuple[str, ...] | None) -> None:
-        if sources is None:
-            return
-        self._updating_ai_sources = True
-        try:
-            self.query_one("#ai_usage", AIUsagePane).set_sources(sources)
-        finally:
-            self._updating_ai_sources = False
-
-    def _on_ai_report(
-        self, request: int, sources: tuple[str, ...] | None, report: AIUsageReport
-    ) -> None:
-        if request != self._ai_request:
-            return
-        self._set_ai_sources(sources)
-        self.query_one("#ai_usage", AIUsagePane).show_report(report)
-
-    def _on_ai_error(
-        self, request: int, sources: tuple[str, ...] | None, error: AIUsageError
-    ) -> None:
-        if request != self._ai_request:
-            return
-        self._set_ai_sources(sources)
-        pane = self.query_one("#ai_usage", AIUsagePane)
-        if error.kind == "unavailable":
-            pane.show_error(
-                "AI Usage unavailable. Install ccusage, Bun, Node.js/npx, or pnpm, "
-                "then press Refresh."
-            )
-        else:
-            pane.show_error(str(error))
 
     def action_toggle_pause(self) -> None:
         """Freeze or resume the live refresh."""
@@ -477,8 +409,10 @@ class WinMonitorApp(App[None]):
 
     def action_search(self) -> None:
         """Reveal the search box for the current view."""
-        if self.state.view == "ai_usage":
-            self.status.set_message("Use the Source and Report filters in AI Usage.", "information")
+        pane = self._standalone_pane()
+        if pane is not None:
+            if not pane.focus_search():
+                self.status.set_message(pane.SEARCH_HINT, "information")
             return
         if self.state.view == "dashboard":
             self.action_view("processes")
@@ -545,7 +479,7 @@ class WinMonitorApp(App[None]):
 
     def action_details(self) -> None:
         """Open the details screen for whatever is selected."""
-        if self.state.view == "ai_usage":
+        if self._standalone_pane() is not None:
             return
         if self.state.view in ("ports", "connections"):
             self._show_port_details()
@@ -623,7 +557,7 @@ class WinMonitorApp(App[None]):
 
     def _termination_target(self) -> int | None:
         """The PID the kill keys act on, or ``None`` with an explanation."""
-        if self.state.view in ("dashboard", "ai_usage"):
+        if self.state.view == "dashboard" or self._standalone_pane() is not None:
             self.status.set_message(
                 "Open the Processes or Ports view to terminate a process.", "warning"
             )
@@ -698,10 +632,9 @@ class WinMonitorApp(App[None]):
 
     def action_export_view(self) -> None:
         """Write the current view to a timestamped JSON file."""
-        if self.state.view == "ai_usage":
-            self.status.set_message(
-                "AI Usage reports are available from ccusage --json.", "information"
-            )
+        pane = self._standalone_pane()
+        if pane is not None:
+            self.status.set_message(pane.EXPORT_HINT, "information")
             return
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         try:

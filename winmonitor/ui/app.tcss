@@ -166,8 +166,56 @@ AIUsagePane.loading {
     margin: 1;
 }
 
-#ai-wait.hidden, #ai-table.hidden {
+/* Per-source summary: one line per agent, so it grows with the number of
+ * tools in use but never pushes the report table off a small terminal. */
+#ai-sources {
+    height: auto;
+    max-height: 10;
+    padding: 0 1;
+    margin: 1 0 0 0;
+    border-left: tall $accent 50%;
+}
+
+#ai-wait.hidden, #ai-table.hidden, #ai-sources.hidden {
     display: none;
+}
+
+/* ------------------------------------------------------------ Markdown --- */
+
+MarkdownPane {
+    height: 1fr;
+    padding: 1;
+}
+
+#md-body {
+    height: 1fr;
+}
+
+#md-sidebar {
+    width: 36;
+    height: 1fr;
+    margin: 0 1 0 0;
+}
+
+#md-files {
+    height: 1fr;
+    scrollbar-size-vertical: 1;
+}
+
+#md-count, #md-path {
+    height: auto;
+    padding: 0 1;
+}
+
+#md-main {
+    width: 1fr;
+    height: 1fr;
+}
+
+#md-scroll {
+    height: 1fr;
+    border: round $primary 40%;
+    scrollbar-size-vertical: 1;
 }
 
 /* -------------------------------------------------------------- search --- */
