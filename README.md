@@ -219,7 +219,7 @@ winmonitor --version
 Expected output:
 
 ```text
-winmonitor 1.2.0
+winmonitor 1.3.0
 ```
 
 If `winmonitor` is not recognised:
