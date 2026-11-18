@@ -47,6 +47,7 @@ from ..app.state import AppState, Snapshot
 from ..config.settings import Settings
 from ..exporters import export
 from ..models import PortInfo
+from ..services.agentflow import AgentFlowService
 from ..services.ai_usage import AIUsageService, CCUsageAdapter
 from ..services.termination_service import TerminationPlan, TerminationResult
 from ..services.usage_cache import UsageCache
@@ -97,7 +98,7 @@ class WinMonitorApp(App[None]):
 
     def __init__(self, settings: Settings, controller: MonitorController | None = None) -> None:
         super().__init__()
-        self.settings = settings
+        self.settings: Settings = settings
         self.controller = controller or MonitorController(settings)
         self.state = AppState.from_settings(settings)
         self._dialog_open = False
@@ -108,6 +109,11 @@ class WinMonitorApp(App[None]):
         self.ai_usage: AIUsageService = AIUsageService(
             CCUsageAdapter(timeout=settings.ai_usage_timeout),
             disk_cache=UsageCache() if settings.ai_usage_disk_cache else None,
+        )
+        # The Agents view polls this local server instead of the snapshot
+        # loop; replaceable the same way before the app runs.
+        self.agentflow: AgentFlowService = AgentFlowService(
+            url=settings.agentflow_url, timeout=settings.agentflow_timeout
         )
 
     # -- layout ------------------------------------------------------------ #
@@ -148,7 +154,7 @@ class WinMonitorApp(App[None]):
         return self.query_one(f"#{self.state.view}")
 
     def _standalone_pane(self) -> StandalonePane | None:
-        """The current pane when it loads its own data (AI Usage, Markdown)."""
+        """The current pane when it loads its own data (AI Usage, Agents, Markdown)."""
         pane = self.current_pane()
         return pane if isinstance(pane, StandalonePane) else None
 

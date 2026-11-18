@@ -184,6 +184,42 @@ AIUsagePane.loading {
     display: none;
 }
 
+/* -------------------------------------------------------------- Agents --- */
+
+AgentsPane {
+    height: 1fr;
+    padding: 1;
+}
+
+#ag-summary {
+    height: 1;
+    padding: 0 1;
+}
+
+#ag-filters {
+    height: 3;
+    background: $panel;
+}
+
+.ag-filter-label {
+    width: 9;
+    content-align: left middle;
+    color: $accent;
+}
+
+#ag-source {
+    width: 25;
+}
+
+#ag-message {
+    height: auto;
+    padding: 0 1;
+}
+
+#ag-table {
+    height: 1fr;
+}
+
 /* ------------------------------------------------------------ Markdown --- */
 
 MarkdownPane {

@@ -23,7 +23,7 @@ from .app_harness import port_key, select_row, settle, status
 # Navigation
 # --------------------------------------------------------------------------- #
 
-ORDER = ["dashboard", "processes", "ports", "connections", "ai_usage", "markdown"]
+ORDER = ["dashboard", "processes", "ports", "connections", "ai_usage", "agents", "markdown"]
 
 
 @pytest.mark.asyncio
@@ -70,7 +70,7 @@ async def test_each_view_key_opens_its_view_and_the_navbar_marks_it(make_app):
     app = make_app()
     async with app.run_test(size=(140, 45)) as pilot:
         await settle(app, pilot)
-        for key, view in zip("spocam", ORDER, strict=True):
+        for key, view in zip("spocagm", ORDER, strict=True):
             await pilot.press(key)
             await settle(app, pilot)
             assert app.state.view == view
@@ -78,7 +78,7 @@ async def test_each_view_key_opens_its_view_and_the_navbar_marks_it(make_app):
         navbar = str(app.query_one("#navbar").render())
         for label in ("S:System", "P:Processes", "O:Ports", "C:Connections"):
             assert label in navbar
-        assert "A:AI Usage" in navbar and "M:Markdown" in navbar
+        assert "A:AI Usage" in navbar and "G:Agents" in navbar and "M:Markdown" in navbar
 
 
 @pytest.mark.asyncio
@@ -88,7 +88,7 @@ async def test_help_lists_every_view_key(make_app):
     from winmonitor.cli import app as cli_app
 
     result = CliRunner().invoke(cli_app, ["keys"])
-    for description in ("Processes", "Ports", "Connections", "AI Usage", "Markdown"):
+    for description in ("Processes", "Ports", "Connections", "AI Usage", "Agents", "Markdown"):
         assert description in result.output
 
 
@@ -230,7 +230,14 @@ async def test_export_writes_the_visible_rows(make_app, tmp_path, key, prefix, n
         assert "Exported to" in status(app)
 
 
-@pytest.mark.parametrize(("key", "hint"), [("a", "ccusage --json"), ("m", "read-only")])
+@pytest.mark.parametrize(
+    ("key", "hint"),
+    [
+        ("a", "ccusage --json"),
+        ("g", "REST API"),
+        ("m", "read-only"),
+    ],
+)
 @pytest.mark.asyncio
 async def test_standalone_views_explain_instead_of_exporting(make_app, tmp_path, key, hint):
     app = make_app()

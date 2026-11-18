@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from textual.widget import Widget
 
+from .agents import AgentsPane
 from .ai_usage import AIUsagePane
 from .connections import ConnectionsPane
 from .dashboard import DashboardPane
@@ -90,6 +91,13 @@ VIEWS: tuple[ViewSpec, ...] = (
         "AI Usage",
         "AI Usage (per-source tokens, cost, report filters)",
         lambda app, view_id: AIUsagePane(app.ai_usage, id=view_id),
+    ),
+    ViewSpec(
+        "agents",
+        "g",
+        "Agents",
+        "Live AI agents (AgentFlow: sessions, tokens, files, sub-agents)",
+        lambda app, view_id: AgentsPane(app.agentflow, app.settings, id=view_id),
     ),
     ViewSpec(
         "markdown",

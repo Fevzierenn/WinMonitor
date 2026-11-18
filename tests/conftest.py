@@ -254,9 +254,11 @@ def state(settings, snapshot) -> AppState:
 
 @pytest.fixture
 def make_app(snapshot, monkeypatch, tmp_path):
+    from winmonitor.services.agentflow import AgentFlowService
     from winmonitor.services.ai_usage import AIUsageService
     from winmonitor.ui.app import WinMonitorApp
 
+    from .agentflow_fakes import FakeAgentFlowProvider
     from .app_harness import EmptyAIProvider, FakeController
 
     """Build the app; ``reply`` is what every dialog answers."""
@@ -268,6 +270,8 @@ def make_app(snapshot, monkeypatch, tmp_path):
         # A long interval keeps timer ticks from rebuilding tables mid-test.
         app = WinMonitorApp(Settings(refresh_interval=60_000), controller=FakeController(snapshot))
         app.ai_usage = AIUsageService(EmptyAIProvider())
+        # The Agents view would otherwise poll the real local server.
+        app.agentflow = AgentFlowService(FakeAgentFlowProvider())
         app.dialogs = []
 
         async def answer(screen):

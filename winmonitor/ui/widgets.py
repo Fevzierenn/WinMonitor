@@ -302,6 +302,7 @@ ACTION_KEYS: tuple[tuple[str, str], ...] = (
     ("i", "Reverse the sort order"),
     ("y", "Toggle system processes"),
     ("l", "Ports view: listening only or every socket"),
+    ("w", "Agents view: open the AgentFlow web dashboard"),
     ("e", "Export the current view to JSON"),
     ("?", "This help"),
     ("q", "Quit"),

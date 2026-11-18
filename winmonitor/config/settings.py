@@ -94,6 +94,24 @@ class Settings(BaseModel):
         default=True,
         description="Keep the last ccusage reports on disk and show them while refreshing",
     )
+    agentflow_enabled: bool = Field(
+        default=True, description="Show the Agents view (live AgentFlow sessions)"
+    )
+    agentflow_url: str = Field(
+        default="http://localhost:4310", description="Base URL of the AgentFlow monitoring server"
+    )
+    agentflow_timeout: float = Field(
+        default=4.0,
+        ge=0.5,
+        le=60.0,
+        description="Seconds to wait for one AgentFlow request",
+    )
+    agentflow_poll_interval: float = Field(
+        default=5.0,
+        ge=1.0,
+        le=120.0,
+        description="Seconds between Agents view polls of the AgentFlow server",
+    )
     markdown_roots: list[str] = Field(
         default_factory=list,
         description="Extra folders or files the Markdown view lists besides the working directory",
@@ -241,6 +259,16 @@ ai_usage_timeout = {defaults.ai_usage_timeout}
 # %LOCALAPPDATA%\\winmonitor\\ai-usage-cache and show it immediately, marked with
 # its age, while a fresh report loads. Set to false to always wait for ccusage.
 ai_usage_disk_cache = {str(defaults.ai_usage_disk_cache).lower()}
+
+# Agents view (G): live AI agent sessions from the AgentFlow monitoring
+# server, a separate project on this machine. Set enabled to false to stop
+# the view from polling.
+agentflow_enabled = {str(defaults.agentflow_enabled).lower()}
+agentflow_url = "{defaults.agentflow_url}"
+
+# Seconds to wait for one AgentFlow request, and how often the view polls.
+agentflow_timeout = {defaults.agentflow_timeout}
+agentflow_poll_interval = {defaults.agentflow_poll_interval}
 
 # Markdown view (M): the working directory is always listed, along with the
 # per-user CLAUDE.md / AGENTS.md / GEMINI.md files. Add more folders here.

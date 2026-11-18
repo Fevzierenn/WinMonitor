@@ -28,11 +28,23 @@ from .config.logging_setup import setup_logging
 from .config.settings import Settings, load_settings, render_default_config
 from .exporters import UnsupportedFormat, export
 from .models import ProcessInfo
+from .models.agentflow import SOURCES
+from .providers.agentflow import AgentFlowError
+from .providers.base import source_name
 from .services import network_service, process_service
+from .services.agentflow import AgentFlowService
 from .services.termination_service import CONFIRMATION_WORD, FORCE_WARNINGS, TerminationPlan
+from .ui.agents_render import summary_line
 from .ui.port_details import render_port_details
 from .ui.process_details import render_process_details
-from .utils.formatting import bar, format_bytes, format_percent, format_timestamp, truncate
+from .utils.formatting import (
+    bar,
+    format_bytes,
+    format_compact,
+    format_percent,
+    format_timestamp,
+    truncate,
+)
 from .utils.permissions import elevation_instructions
 from .utils.windows import enable_virtual_terminal_processing
 
@@ -640,6 +652,84 @@ def cmd_keys() -> None:
     for key, description in key_help():
         table.add_row(key, description)
     console.print(table)
+
+
+def _agentflow_service() -> AgentFlowService:
+    """One shared AgentFlow service for the agents command (tests replace it)."""
+    return AgentFlowService(url=_settings.agentflow_url, timeout=_settings.agentflow_timeout)
+
+
+@app.command("agents")
+def cmd_agents(
+    source: Annotated[
+        str | None,
+        typer.Option("--source", help="Only one source: opencode, claude or codex."),
+    ] = None,
+    limit: Annotated[int, typer.Option("--limit", "-n", help="Rows to show.")] = 30,
+    json_path: Annotated[
+        Path | None,
+        typer.Option("--json", help="Write the session list as JSON to this file."),
+    ] = None,
+) -> None:
+    """List the AI agent sessions the AgentFlow monitor is watching."""
+    import time
+
+    chosen = source.lower() if source else None
+    if chosen is not None and chosen not in SOURCES:
+        error_console.print(f"[red]Unknown source {source!r}. Use opencode, claude or codex.[/red]")
+        raise typer.Exit(code=2)
+
+    try:
+        overview = _agentflow_service().overview()
+    except AgentFlowError as exc:
+        error_console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from None
+
+    if json_path is not None:
+        agents = overview.agents
+        if chosen is not None:
+            agents = [agent for agent in agents if agent.source == chosen]
+        path = export(agents, json_path, kind="agents", fmt="json")
+        console.print(f"[green]Exported {len(agents)} agents to {path.resolve()}[/green]")
+        return
+
+    # A compact one-line-per-session table, like the other read-only commands:
+    # the pane's two-line AGENT cell and the full ten columns do not fit an
+    # 80 column terminal. The detail screen and --json carry the rest.
+    from .ui.agents_render import relative_activity, status_style
+
+    agents = overview.agents
+    if chosen is not None:
+        agents = [agent for agent in agents if agent.source == chosen]
+    shown = agents[:limit]
+    now_ms = int(time.time() * 1000)
+
+    table = Table(title=f"AI agents ({len(agents)} matching, showing {len(shown)})")
+    table.add_column("STATUS", no_wrap=True)
+    table.add_column("SOURCE", no_wrap=True)
+    table.add_column("AGENT", no_wrap=True, overflow="ellipsis")
+    table.add_column("MODEL", no_wrap=True)
+    table.add_column("IN", justify="right", no_wrap=True)
+    table.add_column("OUT", justify="right", no_wrap=True)
+    table.add_column("CACHE", justify="right", no_wrap=True)
+    table.add_column("LAST", justify="right", no_wrap=True)
+    for agent in shown:
+        table.add_row(
+            Text("●", style=status_style(agent.status)),
+            source_name(agent.source),
+            truncate(agent.title, 32),
+            truncate(agent.model, 16) or "-",
+            format_compact(agent.tokens.input),
+            format_compact(agent.tokens.output),
+            format_compact(agent.tokens.cache_total),
+            relative_activity(agent.lastActivityAt, now_ms),
+        )
+    console.print(table)
+    console.print(summary_line(overview, chosen))
+    if len(agents) > len(shown):
+        console.print(f"[dim]... and {len(agents) - len(shown)} more.[/dim]")
+    if not agents:
+        console.print("[dim]No matching sessions in AgentFlow's 14 day window.[/dim]")
 
 
 @app.command("md")
