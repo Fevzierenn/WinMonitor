@@ -5,7 +5,7 @@
 [![Download](https://img.shields.io/github/v/release/Fevzierenn/WinMonitor?label=download&color=2f81f7)](https://github.com/Fevzierenn/WinMonitor/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078d4)](https://github.com/Fevzierenn/WinMonitor/releases/latest)
 [![Python](https://img.shields.io/badge/python-3.12%2B%20(optional)-3776ab)](#option-b--install-with-python-for-developers-and-faster-startup)
-[![Tests](https://img.shields.io/badge/tests-551%20passing-3fb950)](#for-developers)
+[![Tests](https://img.shields.io/badge/tests-598%20passing-3fb950)](#for-developers)
 [![Licence](https://img.shields.io/badge/licence-MIT-lightgrey)](#licence)
 
 WinMonitor is a Windows system monitor built for developers who need to quickly
@@ -68,6 +68,7 @@ WinMonitor connects the two quickly from the terminal.
 | **Process → port** | See what ports a process is listening on |
 | **Safe stop** | Shows the target, asks for confirmation, then verifies the result |
 | **Live dashboard** | CPU, memory, disk, network, processes, ports, and connections |
+| **Live AI agents** | Watch running agent sessions: current task, tokens, files, and sub-agents |
 | **Search** | Quickly search processes and ports |
 | **Export** | Save the current view as JSON or CSV |
 
@@ -281,6 +282,33 @@ charges. For direct access to the same source data, use commands such as
 `ccusage daily --json`, `ccusage weekly --json`, `ccusage monthly --json`,
 `ccusage session --json`, or `ccusage claude daily --json`.
 
+### Agents
+
+Press **G** to watch every AI agent session running on the machine, live. The
+Agents view reads a local AgentFlow monitor that follows OpenCode, Claude Code
+and Codex sessions: what each agent is working on, which project and files it
+touches, how many input, output and cache tokens it has burned, and which
+sub-agents it spawned.
+
+The table refreshes every few seconds while the view is shown. Use the Source
+selector to filter by tool, and **Enter** to open a detail screen with the
+session's token breakdown, files touched, to-do list, sub-agent tree and
+recent messages. Press **W** to open the full web dashboard in your browser.
+
+The view needs the AgentFlow server running locally. When it is unreachable,
+the view shows the command that starts it instead of an error. Configure it in
+`config.toml`: `agentflow_enabled` (default `true`), `agentflow_url` (default
+`http://localhost:4310`), `agentflow_timeout` (seconds, default 4.0) and
+`agentflow_poll_interval` (seconds, default 5.0).
+
+From the command line:
+
+```bash
+winmonitor agents -n 20
+winmonitor agents --source opencode
+winmonitor agents --json agents.json
+```
+
 ### Markdown reader
 
 Press **M** to read Markdown files without leaving WinMonitor. The left column
@@ -322,6 +350,7 @@ Use one key to switch between views:
 | `O` | Ports — listening ports and their owners |
 | `C` | Connections — active TCP/UDP sockets |
 | `A` | AI Usage — token usage and estimated cost per AI tool, via ccusage |
+| `G` | Agents — live AI agent sessions: task, tokens, files, and sub-agents |
 | `M` | Markdown — project docs and AI agent instruction files |
 
 Navigation:
@@ -365,6 +394,7 @@ winmonitor processes -n 20
 winmonitor connections
 winmonitor system
 winmonitor dev
+winmonitor agents -n 20
 winmonitor md                 # list Markdown files
 winmonitor md README.md       # render one in the terminal
 ```
@@ -628,7 +658,7 @@ Run the tests:
 python -m pytest
 ```
 
-The project currently contains **551 tests**.
+The project currently contains **598 tests**.
 
 ---
 
